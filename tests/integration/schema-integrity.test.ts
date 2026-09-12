@@ -102,7 +102,13 @@ describe.skipIf(!hasDatabase)('database schema integrity', () => {
 
   it('seeds jurisdictions and tax years as reference data only', async () => {
     const federal = await testPrisma().jurisdiction.findUnique({ where: { code: 'US' } });
-    expect(federal).not.toBeNull();
+    // A migrated database is not a set-up database: `prisma migrate deploy` applies schema
+    // but never runs the seed. Say so, so the remedy is obvious rather than deduced.
+    expect(
+      federal,
+      'Reference geography is missing. Run `npm run db:seed` — it is idempotent and seeds ' +
+        'no tax data.',
+    ).not.toBeNull();
     // Multiple years prove nothing is pinned to a single tax year (spec §23).
     const years = await testPrisma().taxYear.count({ where: { year: { gte: 2025, lte: 2027 } } });
     expect(years).toBeGreaterThanOrEqual(3);

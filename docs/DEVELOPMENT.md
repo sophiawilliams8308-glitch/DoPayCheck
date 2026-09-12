@@ -124,12 +124,30 @@ PENDING DATA until sourced from an official document.
 
 ```bash
 npm run db:generate        # regenerate the typed client (after any schema change)
-npm run db:migrate         # create + apply a development migration
-npm run db:migrate:deploy  # apply existing migrations (CI / production)
+npm run db:migrate         # create + apply a development migration (runs the seed after)
+npm run db:migrate:deploy  # apply existing migrations (CI / production) — does NOT seed
 npm run db:seed            # reference geography + empty tax years ONLY (no tax data)
 npm run db:reset           # drop, re-migrate and re-seed (destructive, local only)
 npm run db:studio          # browse data
 ```
+
+### First-time database setup
+
+A migrated database is not yet a set-up database. `db:migrate:deploy` applies schema and
+**never runs the seed** — deploy is the production path, and a production database must not be
+written to as a side effect of applying schema. So on a fresh database, run both, in order:
+
+```bash
+npm run db:migrate:deploy  # schema
+npm run db:seed            # reference geography + empty tax-year containers
+```
+
+`db:migrate` and `db:reset` run the seed for you: it is registered as `migrations.seed` in
+`prisma.config.ts`.
+
+Skipping the seed leaves the database without the `US` jurisdiction, and
+`tests/integration/schema-integrity.test.ts` fails with a message telling you to run
+`npm run db:seed`. That test exists to catch exactly this, so do not work around it.
 
 ### Seed contents
 

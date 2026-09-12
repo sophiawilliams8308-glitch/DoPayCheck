@@ -38,6 +38,19 @@ export default defineConfig({
   schema: 'prisma/schema.prisma',
   migrations: {
     path: 'prisma/migrations',
+    /**
+     * Reference-data seed, run by Prisma after `migrate dev` and `migrate reset`.
+     *
+     * `migrate deploy` deliberately does NOT run it: deploy is the production path, and a
+     * production database must never be written to as a side effect of applying schema. A
+     * freshly deployed database therefore needs `npm run db:seed` once — see
+     * docs/DEVELOPMENT.md.
+     *
+     * The seed inserts reference geography and empty tax-year containers only. It contains
+     * no tax values, and it is idempotent (upsert throughout), so re-running it cannot
+     * duplicate a row or overwrite rule data.
+     */
+    seed: 'tsx prisma/seed.ts',
   },
   datasource: {
     url: databaseUrl,
