@@ -37,8 +37,13 @@ cd DoPayCheck
 npm install
 ```
 
-`npm install` runs `prisma generate` only if you invoke it explicitly; run it once after
-install so the typed database client exists:
+That is all that is required. A `postinstall` script runs `prisma generate` automatically, so
+the typed database client exists straight after install and `npm run typecheck` and
+`npm run build` work on a fresh clone with no extra step.
+
+The generated client lives in `lib/db/generated/` and is git-ignored — it is a build artifact,
+regenerated from `prisma/schema.prisma` rather than committed. Regenerate it manually after
+any schema change:
 
 ```bash
 npm run db:generate
@@ -245,8 +250,9 @@ classification — check server logs for detail.
 Prisma 7 moved it. The URL belongs in `prisma.config.ts` — see §4.
 
 **Type errors mentioning `lib/db/generated`**
-The client is missing or stale. Run `npm run db:generate`. The generated directory is
-git-ignored and must be regenerated after cloning.
+The client is missing or stale. `npm install` normally generates it via `postinstall`, so this
+usually means the schema changed since — run `npm run db:generate`. (If you installed with
+`--ignore-scripts`, `postinstall` did not run and you must generate it manually.)
 
 **Editor cannot resolve `@/...` imports**
 `@/*` maps to the repository root (`tsconfig.json`). Restart the TypeScript server.

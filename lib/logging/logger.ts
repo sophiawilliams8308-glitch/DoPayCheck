@@ -21,39 +21,74 @@ const LEVEL_PRIORITY: Record<LogLevel, number> = {
 };
 
 /**
- * Keys whose values are replaced with `[REDACTED]`. Matching is case-insensitive and
- * substring-based, so `userPassword` and `DATABASE_URL` are both caught.
+ * Sensitive-key matching.
+ *
+ * Matching is TOKEN-aware rather than naive substring matching. A key is split into words on
+ * camelCase, snake_case, kebab-case and digit boundaries, then compared token by token.
+ *
+ * Why not plain substring matching: short patterns swallow innocent keys. `'auth'` matches
+ * `author`/`authorId` and `'ein'` matches `being`/`protein`/`einsteinId`. Both are realistic
+ * keys in this project — spec §38 gives blog posts an Author, §31 records an audit Actor — and
+ * silently redacting them destroys debuggability while protecting nothing.
+ *
+ * Redaction still errs toward safety: a token matches when it EQUALS a sensitive token, or
+ * ENDS WITH one that is at least `SUFFIX_MATCH_MIN_LENGTH` characters (so `userpassword` and
+ * `accesstoken` are caught, while the short `auth`/`ein` patterns stay exact-match only).
  */
-const SENSITIVE_KEY_PATTERNS: readonly string[] = [
+
+/** Sensitive as a standalone word. */
+const SENSITIVE_TOKENS: readonly string[] = [
   'password',
   'passwd',
+  'pwd',
   'secret',
   'token',
-  'apikey',
-  'api_key',
-  'authorization',
   'auth',
+  'authorization',
   'cookie',
   'session',
   'credential',
-  'connectionstring',
-  'database_url',
-  'databaseurl',
+  'credentials',
   'ssn',
-  'socialsecurity',
-  'taxid',
   'ein',
+  'taxid',
   'salary',
   'wage',
   'wages',
-  'grosspay',
-  'netpay',
   'compensation',
-  'w4',
   'withholding',
-  'bankaccount',
-  'routing',
   'email',
+  'iban',
+  'w4',
+];
+
+/**
+ * Minimum length for suffix matching. Keeps `userpassword` covered while preventing the
+ * 3- and 4-character tokens (`ein`, `auth`, `pwd`, `ssn`, `wage`, `w4`) from matching inside
+ * unrelated words.
+ */
+const SUFFIX_MATCH_MIN_LENGTH = 5;
+
+/**
+ * Sensitive only as an adjacent word sequence, so `pay` and `key` stay usable on their own
+ * (`payFrequency` and `sortKey` are not secrets, but `grossPay` and `apiKey` are).
+ */
+const SENSITIVE_PHRASES: readonly (readonly string[])[] = [
+  ['api', 'key'],
+  ['access', 'key'],
+  ['private', 'key'],
+  ['secret', 'key'],
+  ['database', 'url'],
+  ['connection', 'string'],
+  ['gross', 'pay'],
+  ['net', 'pay'],
+  ['take', 'home', 'pay'],
+  ['pay', 'amount'],
+  ['bank', 'account'],
+  ['account', 'number'],
+  ['routing', 'number'],
+  ['social', 'security'],
+  ['tax', 'id'],
 ];
 
 const REDACTED = '[REDACTED]';
@@ -68,10 +103,54 @@ export interface LogRecord {
   readonly context?: LogContext;
 }
 
-function isSensitiveKey(key: string): boolean {
-  const normalized = key.toLowerCase().replace(/[-_\s]/g, '');
-  return SENSITIVE_KEY_PATTERNS.some((pattern) =>
-    normalized.includes(pattern.replace(/[-_\s]/g, '')),
+/**
+ * Splits a key into lowercase word tokens.
+ *
+ * `w4Dependents` → `['w4', 'dependents']`, `DATABASE_URL` → `['database', 'url']`,
+ * `authorId` → `['author', 'id']`, `HTTPServer` → `['http', 'server']`.
+ *
+ * Exported for testing.
+ */
+export function tokenizeKey(key: string): string[] {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .split(/[^A-Za-z0-9]+/)
+    .map((token) => token.toLowerCase())
+    .filter((token) => token.length > 0);
+}
+
+function tokenIsSensitive(token: string): boolean {
+  return SENSITIVE_TOKENS.some(
+    (sensitive) =>
+      token === sensitive ||
+      (sensitive.length >= SUFFIX_MATCH_MIN_LENGTH && token.endsWith(sensitive)),
+  );
+}
+
+function containsPhrase(tokens: readonly string[], phrase: readonly string[]): boolean {
+  if (phrase.length > tokens.length) {
+    return false;
+  }
+  for (let start = 0; start <= tokens.length - phrase.length; start += 1) {
+    if (phrase.every((word, offset) => tokens[start + offset] === word)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Exported for testing. */
+export function isSensitiveKey(key: string): boolean {
+  const tokens = tokenizeKey(key);
+  if (tokens.some(tokenIsSensitive)) {
+    return true;
+  }
+
+  // Also catch run-on spellings with no separator to tokenize on, e.g. `apikey`.
+  const joined = tokens.join('');
+  return SENSITIVE_PHRASES.some(
+    (phrase) => containsPhrase(tokens, phrase) || joined === phrase.join(''),
   );
 }
 
