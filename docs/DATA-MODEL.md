@@ -31,16 +31,45 @@ Everything below exists to hold these:
 
 ## 3. Entities
 
-| Entity          | Purpose                                                                     | Key relationships                                                                                                                |
-| --------------- | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `Jurisdiction`  | A taxing authority: federal, state, county, city, locality, school district | Self-referencing hierarchy (`parent` / `children`); has many `TaxRule`                                                           |
-| `TaxYear`       | A tax-year container for administration and reporting                       | Has many `TaxRule`                                                                                                               |
-| `Source`        | An official document authorising rule data                                  | Has many `TaxRuleSource`                                                                                                         |
-| `TaxRule`       | One versioned, effective-dated rule for a jurisdiction + category           | Belongs to `TaxYear` + `Jurisdiction`; has many `TaxRuleValue`, `TaxRuleSource`, `RuleConflict`; optional self-link `supersedes` |
-| `TaxRuleValue`  | One authoritative component, stored exactly in `NUMERIC`                    | Belongs to `TaxRule`                                                                                                             |
-| `TaxRuleSource` | Rule ↔ source link **with a locator** (page/section/table/citation/excerpt) | Joins `TaxRule` and `Source`                                                                                                     |
-| `RuleConflict`  | A recorded disagreement between sources                                     | Belongs to `TaxRule`; references up to two `Source` rows                                                                         |
-| `AuditLog`      | Append-only record of administrative actions                                | Free-standing; references entities by type + id                                                                                  |
+| Entity                | Purpose                                                                     | Key relationships                                                                                                                |
+| --------------------- | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `Jurisdiction`        | A taxing authority: federal, state, county, city, locality, school district | Self-referencing hierarchy (`parent` / `children`); has many `TaxRule`                                                           |
+| `TaxYear`             | A tax-year container for administration and reporting                       | Has many `TaxRule`                                                                                                               |
+| `Source`              | An official document authorising rule data                                  | Has many `TaxRuleSource`                                                                                                         |
+| `TaxRule`             | One versioned, effective-dated rule for a jurisdiction + category           | Belongs to `TaxYear` + `Jurisdiction`; has many `TaxRuleValue`, `TaxRuleSource`, `RuleConflict`; optional self-link `supersedes` |
+| `TaxRuleValue`        | One authoritative component, stored exactly in `NUMERIC`                    | Belongs to `TaxRule`                                                                                                             |
+| `TaxRuleSource`       | Rule ↔ source link **with a locator** (page/section/table/citation/excerpt) | Joins `TaxRule` and `Source`                                                                                                     |
+| `RuleConflict`        | A recorded disagreement between sources                                     | Belongs to `TaxRule`; references up to two `Source` rows                                                                         |
+| `AuditLog`            | Append-only record of administrative actions                                | Free-standing; references entities by type + id                                                                                  |
+| `TaxBracket`          | One bracket of a progressive schedule                                       | → `TaxRule`; optional direct → `Source`                                                                                          |
+| `WithholdingTable`    | An official payroll withholding table                                       | → `TaxRule`; → many `WithholdingTableRow`; optional → `Source`                                                                   |
+| `WithholdingTableRow` | One wage row of a withholding table                                         | → `WithholdingTable`                                                                                                             |
+| `ReciprocityRule`     | A reciprocity agreement between two states                                  | 1-1 → `TaxRule`; → two `Jurisdiction` (from/to)                                                                                  |
+| `LocalTaxRule`        | A county/city/school-district tax                                           | 1-1 → `TaxRule`; → `Jurisdiction` (the locality)                                                                                 |
+
+### Detail tables — why they hang off `TaxRule`
+
+`TaxBracket`, `WithholdingTable`, `ReciprocityRule` and `LocalTaxRule` carry **only** the
+structure specific to their shape. Identity, versioning, effective dates, lifecycle status,
+verification, source links, conflicts and audit all come from the parent `TaxRule`.
+
+Giving each detail table its own lifecycle columns would create several parallel lifecycles
+that could disagree about which rule is in force — exactly the ambiguity the effective-date
+exclusion constraint exists to prevent. One consequence worth stating: a bracket set, a
+withholding table, a reciprocity agreement and a local tax are all published, superseded and
+audited through the single `TaxRule` workflow.
+
+**`WithholdingTable` is deliberately not `TaxBracket`.** Spec §6 forbids substituting annual
+income-tax brackets for paycheck withholding tables, so they are separate models and the
+withholding table carries a `payFrequency` dimension that a bracket schedule does not.
+
+**`LocalTaxRule` has no ZIP column.** A ZIP is at best an input aid to locality resolution,
+never the legal taxing authority (spec §9).
+
+**Filing status is a string, not an enum.** Filing statuses differ by jurisdiction and are
+jurisdiction _data_; encoding them as an application enum would put business values into
+source code. `payFrequency` _is_ an enum, because spec §11 enumerates the seven frequencies as
+a product-level structural decision.
 
 ### Jurisdictions
 
@@ -53,7 +82,7 @@ resolution; it is never the legal taxing authority.
 
 Any year is representable. `TAX_YEARS` in the seed creates 2025–2027 as empty containers
 purely to demonstrate that nothing is pinned to one year. At most one year may be flagged
-current, enforced by a partial unique index.
+**default** (`isDefault`), enforced by a partial unique index.
 
 ---
 
@@ -273,6 +302,20 @@ Beyond Prisma's schema, the migration adds:
 **Indexes** — tax year, jurisdiction, category, status, rule key, effective-date range, and a
 composite `(jurisdictionId, category, status)` matching the resolution query. Deliberately not
 over-indexed; more will be added when real query patterns exist.
+
+### Structural validation of ordered detail data
+
+`validateBracketSchedule()` and `validateWithholdingRows()` check that ordered structures are
+sound: unique consecutive ordinals, each upper bound greater than its lower bound, contiguity
+with no gap or overlap, and only the final entry open-ended. A gap or overlap would put a wage
+into two rows or none, so it is caught before publication.
+
+Comparison uses `compareDecimalStrings()`, which compares decimal **strings** digit by digit.
+Converting to a JS number first would make 16-digit values indistinguishable, so no
+authoritative value passes through IEEE-754 even during validation.
+
+These check shape and ordering only. They never judge whether a rate or threshold is
+plausible — there is no correct range to check against, and inventing one would be guessing.
 
 ---
 

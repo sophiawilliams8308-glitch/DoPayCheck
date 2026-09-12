@@ -144,6 +144,18 @@ enum AuditAction {
   EXPORT
 }
 
+/// Pay frequencies enumerated by spec §11. These are product-defined structural values,
+/// not tax values, so an enum is appropriate.
+enum PayFrequency {
+  WEEKLY
+  BIWEEKLY
+  SEMIMONTHLY
+  MONTHLY
+  QUARTERLY
+  ANNUAL
+  DAILY
+}
+
 /// Semantic type of a stored authoritative value, so consumers never guess units.
 enum ValueType {
   RATE
@@ -195,6 +207,11 @@ model Jurisdiction {
   updatedAt DateTime @updatedAt
 
   taxRules TaxRule[]
+  sources  Source[]
+
+  localTaxRules      LocalTaxRule[]
+  reciprocityFrom    ReciprocityRule[] @relation("ReciprocityFrom")
+  reciprocityTo      ReciprocityRule[] @relation("ReciprocityTo")
 
   @@index([type])
   @@index([parentId])
@@ -220,8 +237,10 @@ model TaxYear {
   startDate DateTime
   endDate   DateTime
 
-  /// At most one tax year may be flagged current; enforced by a partial unique index.
-  isCurrent Boolean @default(false)
+  /// At most one tax year may be flagged default; enforced by a partial unique index.
+  /// (Renamed from `isCurrent` in the Phase 2 extension; the column is renamed in place so
+  /// existing rows are preserved.)
+  isDefault Boolean @default(false)
 
   notes    String?
   metadata Json?
@@ -230,9 +249,10 @@ model TaxYear {
   updatedAt DateTime @updatedAt
 
   taxRules TaxRule[]
+  sources  Source[]
 
   @@index([status])
-  @@index([isCurrent])
+  @@index([isDefault])
 }
 
 // ===========================================================================
@@ -258,6 +278,17 @@ model Source {
   /// Revision/edition identifier printed on the document, when it has one.
   documentVersion String?
 
+  /// Jurisdiction the document is issued by / applies to, when it is jurisdiction-specific.
+  jurisdictionId String?
+  jurisdiction   Jurisdiction? @relation(fields: [jurisdictionId], references: [id], onDelete: Restrict)
+  /// Tax year the document governs, when it is year-specific.
+  taxYearId      Int?
+  taxYear        TaxYear?      @relation(fields: [taxYearId], references: [id], onDelete: Restrict)
+
+  /// Document-level verification state. Precise per-rule locators and their own verification
+  /// live on `TaxRuleSource`, because one document supports many rules at different locations.
+  verificationStatus VerificationStatus @default(PENDING)
+
   notes  String?
   status SourceStatus @default(ACTIVE)
 
@@ -268,9 +299,15 @@ model Source {
   conflictsAsA    RuleConflict[]  @relation("ConflictSourceA")
   conflictsAsB    RuleConflict[]  @relation("ConflictSourceB")
 
+  /// Direct traces from individual brackets and withholding tables to this document.
+  brackets          TaxBracket[]
+  withholdingTables WithholdingTable[]
+
   @@index([organization])
   @@index([sourceType])
   @@index([status])
+  @@index([jurisdictionId])
+  @@index([taxYearId])
 }
 
 // ===========================================================================
@@ -300,6 +337,12 @@ model TaxRule {
   jurisdiction   Jurisdiction @relation(fields: [jurisdictionId], references: [id], onDelete: Restrict)
 
   category    RuleCategory
+  /// Optional finer classification within a category, e.g. a specific programme or table
+  /// family. Free text because the taxonomy is jurisdiction-specific and must stay data.
+  subcategory String?
+  /// Primary shape of this rule's authoritative value, when it has a single dominant one.
+  /// Null for composite rules (bracket sets, withholding tables).
+  valueType   ValueType?
   name        String
   description String?
 
@@ -341,6 +384,11 @@ model TaxRule {
   values    TaxRuleValue[]
   sources   TaxRuleSource[]
   conflicts RuleConflict[]
+
+  brackets          TaxBracket[]
+  withholdingTables WithholdingTable[]
+  reciprocity       ReciprocityRule?
+  localTax          LocalTaxRule?
 
   @@unique([ruleKey, version])
   @@index([taxYearId])
@@ -482,4 +530,211 @@ model AuditLog {
   @@index([entityType, entityId])
   @@index([action])
   @@index([createdAt])
+}
+
+// ===========================================================================
+// STRUCTURED RULE DETAIL TABLES
+//
+// DESIGN DECISION — why these hang off TaxRule rather than standing alone.
+//
+// Each table below carries ONLY the structure specific to its shape. Identity, versioning,
+// effective dates, lifecycle status, verification, source links, conflicts and audit all come
+// from the parent TaxRule. Duplicating those columns per detail table would create several
+// parallel lifecycles that could disagree about which rule is in force — precisely the
+// ambiguity the effective-date exclusion constraint exists to prevent.
+//
+// Consequence: a bracket set, a withholding table, a reciprocity agreement and a local tax
+// are all published, superseded and audited through the single TaxRule workflow.
+//
+// EVERY authoritative numeric column here is NUMERIC(28,12) AND NULLABLE. A value the source
+// does not state is NULL with a verification status — never 0 (spec §19).
+// ===========================================================================
+
+/// One bracket of a progressive schedule (spec §20).
+///
+/// Bounds are nullable: the lowest bracket may state no lower bound and the top bracket no
+/// upper bound. `baseTax` is populated only where the official method explicitly states a
+/// flat amount added before the marginal rate.
+model TaxBracket {
+  id        String  @id @default(cuid())
+  taxRuleId String
+  taxRule   TaxRule @relation(fields: [taxRuleId], references: [id], onDelete: Cascade)
+
+  /// Filing status key. Free text, not an enum: filing statuses differ by jurisdiction and
+  /// are jurisdiction data, not application constants (architecture rule 12).
+  filingStatus String
+  /// Position within the schedule, ascending.
+  ordinal      Int
+
+  lowerBound Decimal? @db.Decimal(28, 12)
+  /// NULL means the top, open-ended bracket.
+  upperBound Decimal? @db.Decimal(28, 12)
+  rate       Decimal? @db.Decimal(28, 12)
+  /// Flat amount added before the marginal rate, where the official method states one.
+  baseTax    Decimal? @db.Decimal(28, 12)
+
+  /// Optional narrower period than the parent rule, for mid-period schedule corrections.
+  effectiveFrom DateTime?
+  effectiveTo   DateTime?
+
+  /// Direct trace to the exact document supporting this bracket, in addition to the
+  /// rule-level sources.
+  sourceId String?
+  source   Source? @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+
+  verificationStatus VerificationStatus @default(PENDING)
+  notes              String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([taxRuleId, filingStatus, ordinal])
+  @@index([taxRuleId])
+  @@index([filingStatus])
+  @@index([verificationStatus])
+}
+
+/// An official payroll withholding table (spec §20).
+///
+/// IMPORTANT: a withholding table is NOT a set of annual income-tax brackets. Spec §6 forbids
+/// substituting one for the other, which is why this is a separate model from TaxBracket with
+/// its own pay-frequency dimension.
+model WithholdingTable {
+  id        String  @id @default(cuid())
+  taxRuleId String
+  taxRule   TaxRule @relation(fields: [taxRuleId], references: [id], onDelete: Cascade)
+
+  /// Identifier the official document gives the table, e.g. a table number or name.
+  tableCode    String
+  /// Withholding method the table belongs to (percentage method, wage bracket method, …).
+  /// Free text: methods are named by each jurisdiction's own documentation.
+  method       String
+  filingStatus String
+  payFrequency PayFrequency
+
+  /// Per-allowance amount, where the method uses allowances.
+  allowanceAmount Decimal? @db.Decimal(28, 12)
+
+  effectiveFrom DateTime?
+  effectiveTo   DateTime?
+
+  sourceId String?
+  source   Source? @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+
+  verificationStatus VerificationStatus @default(PENDING)
+  notes              String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  rows WithholdingTableRow[]
+
+  @@unique([taxRuleId, tableCode, filingStatus, payFrequency])
+  @@index([taxRuleId])
+  @@index([payFrequency])
+  @@index([verificationStatus])
+}
+
+/// One wage row of a withholding table, preserved exactly as published.
+model WithholdingTableRow {
+  id                 String           @id @default(cuid())
+  withholdingTableId String
+  withholdingTable   WithholdingTable @relation(fields: [withholdingTableId], references: [id], onDelete: Cascade)
+
+  /// Row position within the table, ascending by wage.
+  ordinal Int
+
+  wageFrom Decimal? @db.Decimal(28, 12)
+  /// NULL means the top, open-ended row.
+  wageTo   Decimal? @db.Decimal(28, 12)
+
+  baseWithholding       Decimal? @db.Decimal(28, 12)
+  percentage            Decimal? @db.Decimal(28, 12)
+  adjustment            Decimal? @db.Decimal(28, 12)
+  additionalWithholding Decimal? @db.Decimal(28, 12)
+
+  verificationStatus VerificationStatus @default(PENDING)
+  notes              String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([withholdingTableId, ordinal])
+  @@index([withholdingTableId])
+}
+
+/// A reciprocity agreement between two states (spec §10).
+///
+/// One per TaxRule, so the agreement inherits that rule's lifecycle, effective dates, sources
+/// and audit trail. Jurisdictions are referenced by FOREIGN KEY, never by state-name string —
+/// spec §10 forbids inferring reciprocity from names.
+model ReciprocityRule {
+  id        String  @id @default(cuid())
+  taxRuleId String  @unique
+  taxRule   TaxRule @relation(fields: [taxRuleId], references: [id], onDelete: Cascade)
+
+  /// State of residence.
+  fromJurisdictionId String
+  fromJurisdiction   Jurisdiction @relation("ReciprocityFrom", fields: [fromJurisdictionId], references: [id], onDelete: Restrict)
+  /// State of work.
+  toJurisdictionId   String
+  toJurisdiction     Jurisdiction @relation("ReciprocityTo", fields: [toJurisdictionId], references: [id], onDelete: Restrict)
+
+  /// How withholding is treated under the agreement, as stated by the source.
+  withholdingTreatment String
+  /// Certificate or exemption form the employee must file, where one is required.
+  requiredForm         String?
+
+  conditions Json?
+  exceptions Json?
+  notes      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([fromJurisdictionId, toJurisdictionId, taxRuleId])
+  @@index([fromJurisdictionId])
+  @@index([toJurisdictionId])
+}
+
+/// A county, city, school district or other local tax (spec §9).
+///
+/// One per TaxRule. `localJurisdictionId` points at the specific local authority; its parent
+/// chain (city -> county -> state) is walked through the Jurisdiction hierarchy.
+///
+/// A ZIP code is deliberately absent: a ZIP is at best an input aid to locality resolution,
+/// never the legal taxing authority (spec §9).
+model LocalTaxRule {
+  id        String  @id @default(cuid())
+  taxRuleId String  @unique
+  taxRule   TaxRule @relation(fields: [taxRuleId], references: [id], onDelete: Cascade)
+
+  localJurisdictionId String
+  localJurisdiction   Jurisdiction @relation(fields: [localJurisdictionId], references: [id], onDelete: Restrict)
+
+  /// Kind of local tax, e.g. an earned income tax or occupational privilege tax. Free text
+  /// because local tax naming is jurisdiction-specific data.
+  taxType String
+
+  appliesToEmployee Boolean @default(true)
+  appliesToEmployer Boolean @default(false)
+
+  employeeRate Decimal? @db.Decimal(28, 12)
+  employerRate Decimal? @db.Decimal(28, 12)
+  wageBase     Decimal? @db.Decimal(28, 12)
+  threshold    Decimal? @db.Decimal(28, 12)
+
+  /// How residents and non-residents are treated, as stated by the source.
+  residentTreatment    String?
+  nonResidentTreatment String?
+
+  conditions Json?
+  exceptions Json?
+  notes      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([localJurisdictionId])
+  @@index([taxType])
 }

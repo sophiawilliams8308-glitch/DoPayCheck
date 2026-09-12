@@ -8,7 +8,7 @@ import { AppError, ErrorCode } from '@/lib/errors/app-error';
  * Nothing is hardcoded to a single year. Adding 2027, 2028 and beyond is inserting rows, not
  * changing code — which is what makes routine annual updates a data task (spec §23).
  *
- * At most one year may be flagged current; a partial unique index enforces it in the database.
+ * At most one year may be flagged default; a partial unique index enforces it in the database.
  */
 
 export async function findByYear(year: number): Promise<TaxYear | null> {
@@ -19,8 +19,8 @@ export async function listAll(): Promise<TaxYear[]> {
   return getPrisma().taxYear.findMany({ orderBy: { year: 'desc' } });
 }
 
-export async function getCurrent(): Promise<TaxYear | null> {
-  return getPrisma().taxYear.findFirst({ where: { isCurrent: true } });
+export async function getDefault(): Promise<TaxYear | null> {
+  return getPrisma().taxYear.findFirst({ where: { isDefault: true } });
 }
 
 export interface CreateTaxYearInput {
@@ -50,19 +50,19 @@ export async function create(input: CreateTaxYearInput): Promise<TaxYear> {
 }
 
 /**
- * Marks one tax year current, clearing the flag elsewhere.
+ * Marks one tax year the default, clearing the flag elsewhere.
  *
  * Done in a transaction because the partial unique index would otherwise reject the write
- * while the previous current year still holds the flag.
+ * while the previous default year still holds the flag.
  */
-export async function setCurrent(year: number): Promise<TaxYear> {
+export async function setDefault(year: number): Promise<TaxYear> {
   const prisma = getPrisma();
   return prisma.$transaction(async (tx) => {
     const target = await tx.taxYear.findUnique({ where: { year } });
     if (target === null) {
       throw new AppError(ErrorCode.NOT_FOUND, `Tax year ${String(year)} not found`);
     }
-    await tx.taxYear.updateMany({ where: { isCurrent: true }, data: { isCurrent: false } });
-    return tx.taxYear.update({ where: { year }, data: { isCurrent: true } });
+    await tx.taxYear.updateMany({ where: { isDefault: true }, data: { isDefault: false } });
+    return tx.taxYear.update({ where: { year }, data: { isDefault: true } });
   });
 }

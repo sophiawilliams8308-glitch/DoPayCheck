@@ -182,3 +182,194 @@ export function rangesOverlap(
   const endB = toB?.getTime() ?? Number.POSITIVE_INFINITY;
   return fromA.getTime() < endB && fromB.getTime() < endA;
 }
+
+// ===========================================================================
+// STRUCTURED DETAIL VALIDATION (Phase 2 extension)
+//
+// Brackets and withholding tables are ordered, contiguous structures. A gap or an overlap
+// means a wage falls into two rows or none — either way the eventual calculation would be
+// wrong. These checks validate SHAPE and ORDERING only; they never judge whether a rate or
+// threshold is plausible, because there is no correct range to check against.
+// ===========================================================================
+
+/** One bracket as supplied for validation. Bounds are decimal STRINGS, never numbers. */
+export interface BracketInput {
+  readonly ordinal: number;
+  readonly lowerBound: string | null;
+  readonly upperBound: string | null;
+  readonly filingStatus: string;
+}
+
+/** One withholding-table row as supplied for validation. */
+export interface WithholdingRowInput {
+  readonly ordinal: number;
+  readonly wageFrom: string | null;
+  readonly wageTo: string | null;
+}
+
+/**
+ * Compares two decimal strings exactly, without converting to a JS number.
+ *
+ * Implemented by aligning the integer and fractional parts as strings, so a 16-digit wage
+ * base compares correctly and no value ever passes through IEEE-754 (spec §4).
+ */
+export function compareDecimalStrings(a: string, b: string): -1 | 0 | 1 {
+  const parse = (value: string): { neg: boolean; int: string; frac: string } => {
+    const neg = value.startsWith('-');
+    const body = neg ? value.slice(1) : value;
+    const [int = '0', frac = ''] = body.split('.');
+    return { neg, int: int.replace(/^0+(?=\d)/, ''), frac };
+  };
+
+  const left = parse(a);
+  const right = parse(b);
+
+  if (left.neg !== right.neg) {
+    return left.neg ? -1 : 1;
+  }
+
+  const sign: 1 | -1 = left.neg ? -1 : 1;
+
+  if (left.int.length !== right.int.length) {
+    return (left.int.length > right.int.length ? 1 : -1) * sign === 1 ? 1 : -1;
+  }
+  if (left.int !== right.int) {
+    return (left.int > right.int ? 1 : -1) * sign === 1 ? 1 : -1;
+  }
+
+  const width = Math.max(left.frac.length, right.frac.length);
+  const lf = left.frac.padEnd(width, '0');
+  const rf = right.frac.padEnd(width, '0');
+  if (lf === rf) {
+    return 0;
+  }
+  return (lf > rf ? 1 : -1) * sign === 1 ? 1 : -1;
+}
+
+/**
+ * Validates an ordered bracket schedule for one filing status.
+ *
+ * Checks: ordinals are unique and consecutive from 0; each bracket's upper bound exceeds its
+ * lower bound; brackets are contiguous (each lower bound equals the previous upper bound);
+ * only the final bracket may be open-ended.
+ */
+export function validateBracketSchedule(brackets: readonly BracketInput[]): RuleValidationResult {
+  const issues: FieldIssue[] = [];
+
+  if (brackets.length === 0) {
+    return { valid: true, issues };
+  }
+
+  const sorted = [...brackets].sort((a, b) => a.ordinal - b.ordinal);
+
+  const ordinals = new Set(sorted.map((bracket) => bracket.ordinal));
+  if (ordinals.size !== sorted.length) {
+    issues.push({ path: 'brackets.ordinal', message: 'Bracket ordinals must be unique' });
+  }
+
+  sorted.forEach((bracket, index) => {
+    if (bracket.ordinal !== index) {
+      issues.push({
+        path: `brackets.${String(index)}.ordinal`,
+        message: `Bracket ordinals must run consecutively from 0; found ${String(bracket.ordinal)}`,
+      });
+    }
+
+    if (
+      bracket.lowerBound !== null &&
+      bracket.upperBound !== null &&
+      compareDecimalStrings(bracket.lowerBound, bracket.upperBound) >= 0
+    ) {
+      issues.push({
+        path: `brackets.${String(index)}.upperBound`,
+        message: 'Bracket upperBound must be greater than lowerBound',
+      });
+    }
+
+    const isLast = index === sorted.length - 1;
+    if (!isLast && bracket.upperBound === null) {
+      issues.push({
+        path: `brackets.${String(index)}.upperBound`,
+        message: 'Only the final bracket may be open-ended',
+      });
+    }
+
+    if (index > 0) {
+      const previous = sorted[index - 1];
+      if (
+        previous !== undefined &&
+        previous.upperBound !== null &&
+        bracket.lowerBound !== null &&
+        compareDecimalStrings(previous.upperBound, bracket.lowerBound) !== 0
+      ) {
+        issues.push({
+          path: `brackets.${String(index)}.lowerBound`,
+          message:
+            'Brackets must be contiguous: each lowerBound must equal the previous upperBound',
+        });
+      }
+    }
+  });
+
+  return { valid: issues.length === 0, issues };
+}
+
+/**
+ * Validates an ordered withholding table's wage rows.
+ *
+ * Same contiguity and ordering rules as brackets. Kept separate because a withholding table
+ * is not an income-tax bracket schedule and must never be substituted for one (spec §6).
+ */
+export function validateWithholdingRows(
+  rows: readonly WithholdingRowInput[],
+): RuleValidationResult {
+  const issues: FieldIssue[] = [];
+
+  if (rows.length === 0) {
+    return { valid: true, issues };
+  }
+
+  const sorted = [...rows].sort((a, b) => a.ordinal - b.ordinal);
+
+  if (new Set(sorted.map((row) => row.ordinal)).size !== sorted.length) {
+    issues.push({ path: 'rows.ordinal', message: 'Withholding row ordinals must be unique' });
+  }
+
+  sorted.forEach((row, index) => {
+    if (
+      row.wageFrom !== null &&
+      row.wageTo !== null &&
+      compareDecimalStrings(row.wageFrom, row.wageTo) >= 0
+    ) {
+      issues.push({
+        path: `rows.${String(index)}.wageTo`,
+        message: 'Withholding row wageTo must be greater than wageFrom',
+      });
+    }
+
+    const isLast = index === sorted.length - 1;
+    if (!isLast && row.wageTo === null) {
+      issues.push({
+        path: `rows.${String(index)}.wageTo`,
+        message: 'Only the final withholding row may be open-ended',
+      });
+    }
+
+    if (index > 0) {
+      const previous = sorted[index - 1];
+      if (
+        previous !== undefined &&
+        previous.wageTo !== null &&
+        row.wageFrom !== null &&
+        compareDecimalStrings(previous.wageTo, row.wageFrom) !== 0
+      ) {
+        issues.push({
+          path: `rows.${String(index)}.wageFrom`,
+          message: 'Withholding rows must be contiguous with no gap or overlap',
+        });
+      }
+    }
+  });
+
+  return { valid: issues.length === 0, issues };
+}

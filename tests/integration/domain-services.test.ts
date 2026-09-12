@@ -60,18 +60,18 @@ describe.skipIf(!hasDatabase)('domain services', () => {
       ).rejects.toThrow();
     });
 
-    it('permits at most one current tax year', async () => {
+    it('permits at most one default tax year', async () => {
       const prisma = testPrisma();
-      await prisma.taxYear.updateMany({ where: { isCurrent: true }, data: { isCurrent: false } });
-      await prisma.taxYear.update({ where: { year: YEAR }, data: { isCurrent: true } });
+      await prisma.taxYear.updateMany({ where: { isDefault: true }, data: { isDefault: false } });
+      await prisma.taxYear.update({ where: { year: YEAR }, data: { isDefault: true } });
 
       const other = await createTestTaxYear(YEAR + 1);
-      // The partial unique index makes a second current year impossible.
+      // The partial unique index makes a second default year impossible.
       await expect(
-        prisma.taxYear.update({ where: { year: other.year }, data: { isCurrent: true } }),
+        prisma.taxYear.update({ where: { year: other.year }, data: { isDefault: true } }),
       ).rejects.toThrow();
 
-      await prisma.taxYear.update({ where: { year: YEAR }, data: { isCurrent: false } });
+      await prisma.taxYear.update({ where: { year: YEAR }, data: { isDefault: false } });
       await prisma.taxYear.delete({ where: { year: other.year } });
     });
 
