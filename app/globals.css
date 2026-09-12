@@ -1,0 +1,85 @@
+/*
+ * DoPayCheck — global baseline styles.
+ *
+ * PHASE 1 SCOPE: accessibility and readability primitives only (spec §59).
+ * The design system, brand tokens (spec §51/§52) and Inter typography (spec §53) belong to
+ * the UI phases. No component styling is defined here.
+ */
+
+:root {
+  color-scheme: light;
+
+  /*
+   * Neutral Phase 1 placeholders. These are NOT the brand palette — spec §52 defines the
+   * real default brand, and spec §51 requires it to be configurable through centralized
+   * design tokens. That token system is built with the UI.
+   */
+  --surface: #ffffff;
+  --text: #0f172a;
+  --focus-ring: #2563eb;
+
+  --font-sans:
+    system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji',
+    'Segoe UI Emoji';
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--surface);
+  color: var(--text);
+  font-family: var(--font-sans);
+  line-height: 1.6;
+}
+
+/* Visible keyboard focus everywhere (spec §59). Never remove without a replacement. */
+:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* Skip link: hidden until focused, then anchored top-left. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  padding: 0.75rem 1rem;
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  z-index: 100;
+}
+
+.skip-link:focus {
+  left: 0;
+}
+
+img,
+picture,
+video,
+canvas,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+/* Respect reduced-motion preferences (spec §55, §59). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

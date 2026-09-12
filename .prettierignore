@@ -1,0 +1,12 @@
+node_modules
+.next
+out
+coverage
+lib/db/generated
+package-lock.json
+
+# Authoritative project files — must never be reformatted.
+# docs/SPECIFICATION.md is the Master Specification (verbatim, byte-stable).
+# CLAUDE.md is the Claude Code operating instruction file.
+docs/SPECIFICATION.md
+CLAUDE.md

@@ -1,0 +1,29 @@
+// DoPayCheck — Prisma schema
+//
+// PHASE 1 SCOPE: connection + migration foundation ONLY.
+//
+// This schema intentionally declares NO models.
+//
+// Why: the complete tax-rule data architecture (rules, versions, effective dates,
+// jurisdictions, tax years, sources, verification, approval, publishing, rollback and
+// historical preservation — spec §2, §18–§23) is designed in PHASE 2. Creating models now
+// would mean guessing that architecture and then migrating away from the guess. The Phase 1
+// instruction is explicit: do not create speculative business models.
+//
+// No placeholder or "bootstrap" model is required either: the application boots without one,
+// and database connectivity is verified with a raw `SELECT 1` (see lib/db/client.ts), which
+// needs no model definitions.
+//
+// Phase 2 adds the real models plus their first migration.
+//
+// NOTE (Prisma 7): the datasource block no longer carries `url`. The connection string is
+// supplied by `prisma.config.ts` for CLI/migrate, and by a driver adapter at runtime.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../lib/db/generated"
+}
+
+datasource db {
+  provider = "postgresql"
+}
