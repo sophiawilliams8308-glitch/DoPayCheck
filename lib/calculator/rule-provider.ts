@@ -1,4 +1,4 @@
-import { RuleCategory, RuleStatus } from '@/lib/db/generated/client';
+import type { RuleCategory } from '@/lib/db/generated/client';
 import { getPrisma } from '@/lib/db/client';
 import { prismaDecimalToString } from '@/lib/db/decimal';
 import { ResolutionStatus, resolveApplicableRules } from '@/lib/rules/resolution';
@@ -66,7 +66,7 @@ export async function loadRuleSet(query: RuleProviderQuery): Promise<ResolvedRul
       where: {
         jurisdictionId: jurisdiction.id,
         category,
-        status: RuleStatus.ACTIVE,
+        status: 'ACTIVE',
         effectiveFrom: { lte: query.effectiveDate },
         OR: [{ effectiveTo: null }, { effectiveTo: { gt: query.effectiveDate } }],
       },

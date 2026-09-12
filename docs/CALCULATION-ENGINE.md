@@ -75,6 +75,14 @@ Everything below exists to hold these:
 `calculatePaycheck` is **synchronous and performs no I/O.** It never imports Prisma, a
 repository, a clock or an environment variable. Rules arrive already resolved, as plain data.
 
+Prisma's generated enums (`PayFrequency`, `RuleCategory`) are imported **as types only**. The
+schema stays the single authoritative definition of the member names, but nothing in the
+engine reads them off the generated client's runtime object: those objects reach the engine
+through CommonJS/ESM interop, which is not guaranteed to expose named exports identically on
+every toolchain, and a missing one would be a module-load crash rather than a calculation
+status. Lookup tables therefore use string literals, declared as **total** `Record<Enum, …>`
+maps so a schema change that adds, removes or renames a member stops the build.
+
 ```
 loadRuleSet()  →  ResolvedRuleSet  →  calculatePaycheck()  →  CalculationResult
   (async, DB)        (plain data)        (pure, sync)

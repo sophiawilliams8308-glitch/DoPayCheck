@@ -1,4 +1,4 @@
-import { PayFrequency } from '@/lib/db/generated/client';
+import type { PayFrequency } from '@/lib/db/generated/client';
 
 /**
  * Pay-frequency conversion (spec §11).
@@ -14,16 +14,41 @@ import { PayFrequency } from '@/lib/db/generated/client';
  * a DAILY calculation must supply `periodsPerYear` explicitly, and without it annualization
  * is reported as unavailable rather than guessed.
  * ===========================================================================
+ *
+ * ===========================================================================
+ * RUNTIME INDEPENDENCE.
+ *
+ * `PayFrequency` is imported as a TYPE ONLY. The Prisma schema enum remains the single
+ * authoritative definition, but the pure engine must not depend on the generated client's
+ * RUNTIME value: that value reaches the engine through CommonJS/ESM interop, which is not
+ * guaranteed to expose named exports identically on every toolchain, and an `undefined` enum
+ * object turns into a module-load crash rather than a calculation status.
+ *
+ * The table below therefore uses plain string keys. It is declared as a TOTAL
+ * `Record<PayFrequency, …>`, so if the schema ever adds, removes or renames a member this
+ * file stops compiling — the names cannot silently drift from the schema.
+ * ===========================================================================
  */
 
-const FIXED_PERIODS_PER_YEAR: Partial<Record<PayFrequency, number>> = {
-  [PayFrequency.WEEKLY]: 52,
-  [PayFrequency.BIWEEKLY]: 26,
-  [PayFrequency.SEMIMONTHLY]: 24,
-  [PayFrequency.MONTHLY]: 12,
-  [PayFrequency.QUARTERLY]: 4,
-  [PayFrequency.ANNUAL]: 1,
+/**
+ * Periods per year for every pay frequency, or `null` when the count is not decided by the
+ * calendar. `null` is "undecided", never zero.
+ */
+const PERIODS_PER_YEAR: Record<PayFrequency, number | null> = {
+  WEEKLY: 52,
+  BIWEEKLY: 26,
+  SEMIMONTHLY: 24,
+  MONTHLY: 12,
+  QUARTERLY: 4,
+  ANNUAL: 1,
+  // PENDING DECISION — see above. Never assumed.
+  DAILY: null,
 };
+
+/** Every pay frequency the engine supports, derived from the table above. */
+export const PAY_FREQUENCIES: readonly PayFrequency[] = Object.keys(
+  PERIODS_PER_YEAR,
+) as PayFrequency[];
 
 export type PeriodsPerYearResult =
   | { readonly known: true; readonly periods: number }
@@ -42,8 +67,8 @@ export function periodsPerYear(frequency: PayFrequency, explicit?: number): Peri
     return { known: true, periods: explicit };
   }
 
-  const fixed = FIXED_PERIODS_PER_YEAR[frequency];
-  if (fixed !== undefined) {
+  const fixed = PERIODS_PER_YEAR[frequency];
+  if (typeof fixed === 'number') {
     return { known: true, periods: fixed };
   }
 
@@ -57,5 +82,5 @@ export function periodsPerYear(frequency: PayFrequency, explicit?: number): Peri
 
 /** True when the frequency's periods-per-year is fixed without caller input. */
 export function hasFixedPeriods(frequency: PayFrequency): boolean {
-  return FIXED_PERIODS_PER_YEAR[frequency] !== undefined;
+  return typeof PERIODS_PER_YEAR[frequency] === 'number';
 }

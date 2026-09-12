@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { PayFrequency, RuleCategory, RuleStatus } from '@/lib/db/generated/client';
+import type { PayFrequency, RuleCategory } from '@/lib/db/generated/client';
 import { GENERIC_CURRENCY_POLICY, calculatePaycheck } from '@/lib/calculator';
 import { resolveJurisdiction } from '@/lib/calculator/pipeline/jurisdiction';
 import { ResolutionStatus, resolveApplicableRules } from '@/lib/rules/resolution';
@@ -22,7 +22,7 @@ const base: CalculationInput = {
   taxYear: 2099,
   effectiveDate: new Date('2099-06-15T00:00:00.000Z'),
   employee: { workLocation: { stateCode: 'US-ZZ' } },
-  pay: { basis: 'SALARY', payFrequency: PayFrequency.BIWEEKLY, annualSalary: '52000.00' },
+  pay: { basis: 'SALARY', payFrequency: 'BIWEEKLY', annualSalary: '52000.00' },
   w4: { filingStatus: 'TEST_STATUS' },
 };
 
@@ -33,7 +33,7 @@ function run(input: CalculationInput = base) {
 describe('overtime: explicit rate vs multiplier', () => {
   const hourly = {
     basis: 'HOURLY' as const,
-    payFrequency: PayFrequency.WEEKLY,
+    payFrequency: 'WEEKLY' as PayFrequency,
     hourlyRate: '20',
     regularHours: '40',
     overtimeHours: '10',
@@ -130,21 +130,21 @@ describe('rule resolution safety', () => {
   const commonRule = {
     ruleKey: 'test.superseded',
     version: 1,
-    category: RuleCategory.SOCIAL_SECURITY,
+    category: 'SOCIAL_SECURITY' as RuleCategory,
     jurisdictionId: 'jur-1',
     taxYear: 2099,
     effectiveFrom: new Date('2099-01-01T00:00:00.000Z'),
     effectiveTo: null,
   };
   const query = {
-    category: RuleCategory.SOCIAL_SECURITY,
+    category: 'SOCIAL_SECURITY' as RuleCategory,
     jurisdictionId: 'jur-1',
     effectiveDate: new Date('2099-06-15T00:00:00.000Z'),
   };
 
   it('REJECTS a superseded rule even though its tax year matches', () => {
     const result = resolveApplicableRules(
-      [{ ...commonRule, id: 'r1', status: RuleStatus.SUPERSEDED }],
+      [{ ...commonRule, id: 'r1', status: 'SUPERSEDED' }],
       query,
     );
     expect(result.status).toBe(ResolutionStatus.NOT_FOUND);
@@ -153,8 +153,8 @@ describe('rule resolution safety', () => {
   it('selects the ACTIVE rule when a superseded one also exists', () => {
     const result = resolveApplicableRules(
       [
-        { ...commonRule, id: 'old', version: 1, status: RuleStatus.SUPERSEDED },
-        { ...commonRule, id: 'new', version: 2, status: RuleStatus.ACTIVE },
+        { ...commonRule, id: 'old', version: 1, status: 'SUPERSEDED' },
+        { ...commonRule, id: 'new', version: 2, status: 'ACTIVE' },
       ],
       query,
     );
@@ -170,7 +170,7 @@ describe('rule resolution safety', () => {
         {
           ...commonRule,
           id: 'r1',
-          status: RuleStatus.ACTIVE,
+          status: 'ACTIVE',
           effectiveFrom: new Date('2099-09-01T00:00:00.000Z'),
         },
       ],
@@ -237,14 +237,14 @@ describe('trace metadata', () => {
   it('exposes source IDs on rule-backed steps', () => {
     const withRules: ResolvedRuleSet = {
       byCategory: {
-        [RuleCategory.SOCIAL_SECURITY]: {
+        ['SOCIAL_SECURITY']: {
           found: true,
           rule: {
             reference: {
               ruleId: 'r-1',
               ruleKey: 'test.ss',
               version: 1,
-              category: RuleCategory.SOCIAL_SECURITY,
+              category: 'SOCIAL_SECURITY',
               taxYear: 2099,
               jurisdictionId: 'jur-1',
               jurisdictionCode: 'US',

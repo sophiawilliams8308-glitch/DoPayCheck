@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { PayFrequency } from '@/lib/db/generated/client';
+import type { PayFrequency } from '@/lib/db/generated/client';
 import { toStorageString } from '@/lib/core/money';
 import { annualize, calculateGrossPay } from '@/lib/calculator/pipeline/gross-pay';
 import { hasFixedPeriods, periodsPerYear } from '@/lib/calculator/pipeline/pay-frequency';
@@ -24,7 +24,7 @@ const policy = GENERIC_CURRENCY_POLICY;
 function salary(overrides: Partial<PayInput> = {}): PayInput {
   return {
     basis: 'SALARY',
-    payFrequency: PayFrequency.BIWEEKLY,
+    payFrequency: 'BIWEEKLY',
     annualSalary: '52000.00',
     ...overrides,
   };
@@ -33,12 +33,12 @@ function salary(overrides: Partial<PayInput> = {}): PayInput {
 describe('pay frequency periods', () => {
   it('uses unambiguous calendar counts', () => {
     const expected: [PayFrequency, number][] = [
-      [PayFrequency.WEEKLY, 52],
-      [PayFrequency.BIWEEKLY, 26],
-      [PayFrequency.SEMIMONTHLY, 24],
-      [PayFrequency.MONTHLY, 12],
-      [PayFrequency.QUARTERLY, 4],
-      [PayFrequency.ANNUAL, 1],
+      ['WEEKLY', 52],
+      ['BIWEEKLY', 26],
+      ['SEMIMONTHLY', 24],
+      ['MONTHLY', 12],
+      ['QUARTERLY', 4],
+      ['ANNUAL', 1],
     ];
     for (const [frequency, periods] of expected) {
       const result = periodsPerYear(frequency);
@@ -51,13 +51,13 @@ describe('pay frequency periods', () => {
 
   it('REFUSES to assume paid days per year for DAILY', () => {
     // Payroll policy, not a calendar fact — the engine will not guess (PENDING DECISION).
-    const result = periodsPerYear(PayFrequency.DAILY);
+    const result = periodsPerYear('DAILY');
     expect(result.known).toBe(false);
-    expect(hasFixedPeriods(PayFrequency.DAILY)).toBe(false);
+    expect(hasFixedPeriods('DAILY')).toBe(false);
   });
 
   it('accepts an explicit periodsPerYear for DAILY', () => {
-    const result = periodsPerYear(PayFrequency.DAILY, 260);
+    const result = periodsPerYear('DAILY', 260);
     expect(result.known).toBe(true);
     if (result.known) {
       expect(result.periods).toBe(260);
@@ -65,20 +65,20 @@ describe('pay frequency periods', () => {
   });
 
   it('rejects a non-positive explicit override', () => {
-    expect(periodsPerYear(PayFrequency.WEEKLY, 0).known).toBe(false);
-    expect(periodsPerYear(PayFrequency.WEEKLY, 1.5).known).toBe(false);
+    expect(periodsPerYear('WEEKLY', 0).known).toBe(false);
+    expect(periodsPerYear('WEEKLY', 1.5).known).toBe(false);
   });
 });
 
 describe('salary gross pay', () => {
   it('divides annual salary by the period count for every fixed frequency', () => {
     const cases: [PayFrequency, string][] = [
-      [PayFrequency.WEEKLY, '1000'],
-      [PayFrequency.BIWEEKLY, '2000'],
-      [PayFrequency.SEMIMONTHLY, '2166.67'],
-      [PayFrequency.MONTHLY, '4333.33'],
-      [PayFrequency.QUARTERLY, '13000'],
-      [PayFrequency.ANNUAL, '52000'],
+      ['WEEKLY', '1000'],
+      ['BIWEEKLY', '2000'],
+      ['SEMIMONTHLY', '2166.67'],
+      ['MONTHLY', '4333.33'],
+      ['QUARTERLY', '13000'],
+      ['ANNUAL', '52000'],
     ];
     for (const [frequency, expected] of cases) {
       const result = calculateGrossPay(salary({ payFrequency: frequency }), policy);
@@ -90,7 +90,7 @@ describe('salary gross pay', () => {
   });
 
   it('reports DAILY without periodsPerYear as unsupported rather than guessing', () => {
-    const result = calculateGrossPay(salary({ payFrequency: PayFrequency.DAILY }), policy);
+    const result = calculateGrossPay(salary({ payFrequency: 'DAILY' }), policy);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.reason).toContain('PENDING DECISION');
@@ -99,7 +99,7 @@ describe('salary gross pay', () => {
 
   it('computes DAILY when periodsPerYear is supplied', () => {
     const result = calculateGrossPay(
-      salary({ payFrequency: PayFrequency.DAILY, periodsPerYear: 260 }),
+      salary({ payFrequency: 'DAILY', periodsPerYear: 260 }),
       policy,
     );
     expect(result.ok).toBe(true);
@@ -112,7 +112,7 @@ describe('salary gross pay', () => {
 describe('hourly gross pay', () => {
   const hourly: PayInput = {
     basis: 'HOURLY',
-    payFrequency: PayFrequency.WEEKLY,
+    payFrequency: 'WEEKLY',
     hourlyRate: '25.50',
     regularHours: '40',
   };
@@ -157,7 +157,7 @@ describe('supplemental compensation', () => {
   it('adds bonus, commission, tips and other compensation', () => {
     const result = calculateGrossPay(
       salary({
-        payFrequency: PayFrequency.ANNUAL,
+        payFrequency: 'ANNUAL',
         annualSalary: '1000',
         bonus: '100',
         commission: '50',
@@ -179,7 +179,7 @@ describe('supplemental compensation', () => {
   it('sums many fractional amounts without floating-point drift', () => {
     const result = calculateGrossPay(
       salary({
-        payFrequency: PayFrequency.ANNUAL,
+        payFrequency: 'ANNUAL',
         annualSalary: '0.10',
         bonus: '0.20',
       }),
@@ -193,7 +193,7 @@ describe('supplemental compensation', () => {
 });
 
 describe('annualize', () => {
-  const monthly = salary({ payFrequency: PayFrequency.MONTHLY, annualSalary: '12000' });
+  const monthly = salary({ payFrequency: 'MONTHLY', annualSalary: '12000' });
 
   it('multiplies a per-period amount back up by the period count', () => {
     const gross = calculateGrossPay(monthly, policy);
@@ -208,7 +208,7 @@ describe('annualize', () => {
 
   const daily: PayInput = {
     basis: 'HOURLY',
-    payFrequency: PayFrequency.DAILY,
+    payFrequency: 'DAILY',
     hourlyRate: '10',
     regularHours: '8',
   };

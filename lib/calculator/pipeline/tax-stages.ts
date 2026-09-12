@@ -1,4 +1,4 @@
-import { RuleCategory } from '@/lib/db/generated/client';
+import type { RuleCategory } from '@/lib/db/generated/client';
 import type { Money } from '@/lib/core/money';
 import { money, sum, toStorageString } from '@/lib/core/money';
 
@@ -42,7 +42,7 @@ export const FEDERAL_COMPONENTS: readonly ComponentSpec[] = [
     label: 'Federal income tax withheld',
     // Paycheck withholding uses the official withholding methodology, NOT annual brackets.
     // Spec §6 forbids substituting one for the other.
-    category: RuleCategory.FEDERAL_WITHHOLDING,
+    category: 'FEDERAL_WITHHOLDING',
     bucket: 'federalIncomeTax',
     employerSide: false,
   },
@@ -53,21 +53,21 @@ export const FICA_COMPONENTS: readonly ComponentSpec[] = [
   {
     code: 'SOCIAL_SECURITY_EMPLOYEE',
     label: 'Social Security (employee)',
-    category: RuleCategory.SOCIAL_SECURITY,
+    category: 'SOCIAL_SECURITY',
     bucket: 'socialSecurity',
     employerSide: false,
   },
   {
     code: 'MEDICARE_EMPLOYEE',
     label: 'Medicare (employee)',
-    category: RuleCategory.MEDICARE,
+    category: 'MEDICARE',
     bucket: 'medicare',
     employerSide: false,
   },
   {
     code: 'ADDITIONAL_MEDICARE_EMPLOYEE',
     label: 'Additional Medicare (employee)',
-    category: RuleCategory.MEDICARE,
+    category: 'MEDICARE',
     bucket: 'medicare',
     employerSide: false,
   },
@@ -78,14 +78,14 @@ export const EMPLOYER_COMPONENTS: readonly ComponentSpec[] = [
   {
     code: 'SOCIAL_SECURITY_EMPLOYER',
     label: 'Social Security (employer)',
-    category: RuleCategory.SOCIAL_SECURITY,
+    category: 'SOCIAL_SECURITY',
     bucket: 'socialSecurity',
     employerSide: true,
   },
   {
     code: 'MEDICARE_EMPLOYER',
     label: 'Medicare (employer)',
-    category: RuleCategory.MEDICARE,
+    category: 'MEDICARE',
     bucket: 'medicare',
     employerSide: true,
   },
@@ -94,14 +94,14 @@ export const EMPLOYER_COMPONENTS: readonly ComponentSpec[] = [
     label: 'FUTA (employer)',
     // FUTA has no dedicated category in the Phase 2 enum; it is carried as a federal
     // employer obligation. PENDING DECISION: whether Phase 4 adds a FUTA rule category.
-    category: RuleCategory.SOCIAL_SECURITY,
+    category: 'SOCIAL_SECURITY',
     bucket: 'futa',
     employerSide: true,
   },
   {
     code: 'SUTA_EMPLOYER',
     label: 'SUTA (employer)',
-    category: RuleCategory.SUTA,
+    category: 'SUTA',
     bucket: 'suta',
     employerSide: true,
   },
@@ -111,7 +111,7 @@ export const STATE_COMPONENTS: readonly ComponentSpec[] = [
   {
     code: 'STATE_INCOME_TAX_WITHHOLDING',
     label: 'State income tax withheld',
-    category: RuleCategory.STATE_WITHHOLDING,
+    category: 'STATE_WITHHOLDING',
     bucket: 'stateIncomeTax',
     employerSide: false,
   },
@@ -121,7 +121,7 @@ export const LOCAL_COMPONENTS: readonly ComponentSpec[] = [
   {
     code: 'LOCAL_INCOME_TAX_WITHHOLDING',
     label: 'Local income tax withheld',
-    category: RuleCategory.LOCAL_TAX,
+    category: 'LOCAL_TAX',
     bucket: 'localIncomeTax',
     employerSide: false,
   },

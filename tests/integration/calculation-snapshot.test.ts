@@ -1,6 +1,5 @@
 import { afterAll, describe, expect, it } from 'vitest';
 
-import { PayFrequency, RuleCategory } from '@/lib/db/generated/client';
 import {
   CalculationStatus,
   ENGINE_VERSION,
@@ -30,20 +29,20 @@ const input: CalculationInput = {
   taxYear: 2099,
   effectiveDate: new Date('2099-06-15T00:00:00.000Z'),
   employee: { workLocation: { stateCode: 'US-ZZ' } },
-  pay: { basis: 'SALARY', payFrequency: PayFrequency.MONTHLY, annualSalary: '120000.00' },
+  pay: { basis: 'SALARY', payFrequency: 'MONTHLY', annualSalary: '120000.00' },
   w4: { filingStatus: 'TEST_STATUS' },
 };
 
 const rules: ResolvedRuleSet = {
   byCategory: {
-    [RuleCategory.SOCIAL_SECURITY]: {
+    ['SOCIAL_SECURITY']: {
       found: true,
       rule: {
         reference: {
           ruleId: `rule-${suffix}`,
           ruleKey: `test.${suffix}.ss`,
           version: 3,
-          category: RuleCategory.SOCIAL_SECURITY,
+          category: 'SOCIAL_SECURITY',
           taxYear: 2099,
           jurisdictionId: 'jur-test',
           jurisdictionCode: 'US',

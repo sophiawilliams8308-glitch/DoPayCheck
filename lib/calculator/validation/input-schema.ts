@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { PayFrequency } from '@/lib/db/generated/client';
+import { PAY_FREQUENCIES } from '../pipeline/pay-frequency';
 import type { FieldIssue } from '@/lib/errors/app-error';
 
 /**
@@ -73,7 +73,7 @@ const deductionSchema = z
 const paySchema = z
   .object({
     basis: z.enum(['SALARY', 'HOURLY']),
-    payFrequency: z.enum(PayFrequency),
+    payFrequency: z.enum(PAY_FREQUENCIES),
     annualSalary: nonNegativeDecimal.optional(),
     hourlyRate: nonNegativeDecimal.optional(),
     regularHours: nonNegativeDecimal.optional(),

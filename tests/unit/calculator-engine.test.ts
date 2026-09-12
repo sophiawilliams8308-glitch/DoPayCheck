@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { PayFrequency, RuleCategory } from '@/lib/db/generated/client';
+import type { RuleCategory } from '@/lib/db/generated/client';
 import {
   CalculationStatus,
   ENGINE_VERSION,
@@ -30,7 +30,7 @@ const baseInput: CalculationInput = {
   employee: { workLocation: { stateCode: 'US-ZZ' } },
   pay: {
     basis: 'SALARY',
-    payFrequency: PayFrequency.BIWEEKLY,
+    payFrequency: 'BIWEEKLY',
     annualSalary: '52000.00',
   },
   w4: { filingStatus: 'TEST_STATUS' },
@@ -88,7 +88,7 @@ describe('status folding', () => {
 describe('invalid input', () => {
   it('returns INVALID_INPUT, not a tax-data status', () => {
     const result = calculatePaycheck(
-      { ...baseInput, pay: { basis: 'SALARY', payFrequency: PayFrequency.WEEKLY } },
+      { ...baseInput, pay: { basis: 'SALARY', payFrequency: 'WEEKLY' } },
       { rounding: policy, rules: emptyRules },
     );
     expect(result.status).toBe(CalculationStatus.INVALID_INPUT);
@@ -109,7 +109,7 @@ describe('invalid input', () => {
         ...baseInput,
         pay: {
           basis: 'HOURLY',
-          payFrequency: PayFrequency.WEEKLY,
+          payFrequency: 'WEEKLY',
           hourlyRate: '20',
           regularHours: '40',
           overtimeHours: '5',
@@ -154,7 +154,7 @@ describe('rule conflicts', () => {
   it('reports RULE_CONFLICT without arbitrating', () => {
     const conflicting: ResolvedRuleSet = {
       byCategory: {
-        [RuleCategory.SOCIAL_SECURITY]: {
+        ['SOCIAL_SECURITY']: {
           found: false,
           reason: IncompleteReason.AMBIGUOUS_RULE,
           detail: '2 ACTIVE rules apply',
@@ -173,10 +173,10 @@ describe('unverified rules and pending values', () => {
   it('refuses to use a rule with no verified source', () => {
     const unverified: ResolvedRuleSet = {
       byCategory: {
-        [RuleCategory.MEDICARE]: {
+        ['MEDICARE']: {
           found: true,
           rule: {
-            reference: reference(RuleCategory.MEDICARE, false),
+            reference: reference('MEDICARE', false),
             values: [{ key: 'x', groupKey: '', ordinal: 0, value: '1', verified: true }],
             payload: null,
           },
@@ -192,10 +192,10 @@ describe('unverified rules and pending values', () => {
   it('refuses to use a rule whose values are not stated', () => {
     const pending: ResolvedRuleSet = {
       byCategory: {
-        [RuleCategory.MEDICARE]: {
+        ['MEDICARE']: {
           found: true,
           rule: {
-            reference: reference(RuleCategory.MEDICARE, true),
+            reference: reference('MEDICARE', true),
             // value null = NOT_STATED. Must never become zero (spec §19).
             values: [{ key: 'rate', groupKey: '', ordinal: 0, value: null, verified: false }],
             payload: null,
@@ -212,7 +212,7 @@ describe('unverified rules and pending values', () => {
   it('reports UNSUPPORTED_SCENARIO when a usable rule exists but methodology is later', () => {
     const result = calculatePaycheck(baseInput, {
       rounding: policy,
-      rules: usableRuleSet(RuleCategory.SOCIAL_SECURITY),
+      rules: usableRuleSet('SOCIAL_SECURITY'),
     });
     const ss = result.fica.find((c) => c.code === 'SOCIAL_SECURITY_EMPLOYEE');
     expect(ss?.reason).toBe(IncompleteReason.METHOD_NOT_IMPLEMENTED);
@@ -223,7 +223,7 @@ describe('unverified rules and pending values', () => {
 describe('rule version and source attachment', () => {
   const result = calculatePaycheck(baseInput, {
     rounding: policy,
-    rules: usableRuleSet(RuleCategory.SOCIAL_SECURITY),
+    rules: usableRuleSet('SOCIAL_SECURITY'),
   });
 
   it('retains rule identity and version on the component', () => {
@@ -343,7 +343,7 @@ describe('jurisdiction resolution foundation', () => {
 describe('calculation snapshot', () => {
   const result = calculatePaycheck(baseInput, {
     rounding: policy,
-    rules: usableRuleSet(RuleCategory.SOCIAL_SECURITY),
+    rules: usableRuleSet('SOCIAL_SECURITY'),
   });
   const snapshot = buildSnapshot(baseInput, result);
 
@@ -366,7 +366,7 @@ describe('calculation snapshot', () => {
     // Determinism is what makes a snapshot reproducible (spec §40).
     const replayed = calculatePaycheck(baseInput, {
       rounding: policy,
-      rules: usableRuleSet(RuleCategory.SOCIAL_SECURITY),
+      rules: usableRuleSet('SOCIAL_SECURITY'),
     });
     expect(resultsMatch(result, replayed)).toBe(true);
   });
