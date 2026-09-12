@@ -111,9 +111,14 @@ Prisma 7 differs from earlier versions in two ways that matter here:
 
 ### Schema status
 
-`prisma/schema.prisma` intentionally declares **no models** in Phase 1. The tax-rule data
-architecture is designed in Phase 2 (spec §2, §18–§23); creating models now would mean
-guessing that design. Connectivity is verified with a raw `SELECT 1`, which needs no models.
+`prisma/schema.prisma` defines the Phase 2 rule & data system: `Jurisdiction`, `TaxYear`,
+`Source`, `TaxRule`, `TaxRuleValue`, `TaxRuleSource`, `RuleConflict` and `AuditLog`.
+
+See **`docs/DATA-MODEL.md`** for the architecture: versioning, effective dates, the publish
+gate, source traceability, verification statuses, conflicts and decimal precision.
+
+The schema contains **no tax values**. Every rate, bracket, threshold and wage base is
+PENDING DATA until sourced from an official document.
 
 ### Commands
 
@@ -121,10 +126,21 @@ guessing that design. Connectivity is verified with a raw `SELECT 1`, which need
 npm run db:generate        # regenerate the typed client (after any schema change)
 npm run db:migrate         # create + apply a development migration
 npm run db:migrate:deploy  # apply existing migrations (CI / production)
+npm run db:seed            # reference geography + empty tax years ONLY (no tax data)
+npm run db:reset           # drop, re-migrate and re-seed (destructive, local only)
 npm run db:studio          # browse data
 ```
 
-There are no migrations yet — the first one arrives with the Phase 2 schema.
+### Seed contents
+
+`npm run db:seed` is idempotent and inserts **no tax data**:
+
+- the federal jurisdiction plus 51 states/territories — reference geography;
+- tax-year containers for 2025-2027 — empty shells with no rules.
+
+It deliberately omits brackets, rates, wage bases, thresholds, withholding tables and sources.
+Tax values arrive only through the draft -> review -> approve -> publish workflow, traceable to
+an official document.
 
 ---
 
@@ -140,6 +156,7 @@ There are no migrations yet — the first one arrives with the Phase 2 schema.
 | `npm run typecheck`    | `tsc --noEmit`                                        |
 | `npm test`             | Run the test suite once                               |
 | `npm run test:watch`   | Tests in watch mode                                   |
+| `npm run test:db`      | Integration tests only — requires `DATABASE_URL`      |
 | `npm run format`       | Format with Prettier                                  |
 | `npm run format:check` | Verify formatting                                     |
 
@@ -184,15 +201,22 @@ app/                    Routes, layouts, API route handlers (App Router)
 lib/
   config/               Validated environment configuration
   core/                 Framework-free logic. money.ts = decimal arithmetic foundation
-  db/                   Prisma client + connectivity check (the ONLY place a client is made)
+  db/                   Prisma client, connectivity check, NUMERIC <-> Money bridge
   errors/               Structured errors + safe API responses
   logging/              Structured logger with sensitive-value redaction
   security/             HTTP security headers
   seo/                  Canonical URLs and metadata helpers
   validation/           Centralized Zod validation helpers
-prisma/                 Prisma schema (no models yet — see §4)
+  rules/                Rule categories, payload schemas, lifecycle, verification,
+                        validation, resolution, repository
+  jurisdictions/        Jurisdiction access + hierarchy traversal
+  tax-years/            Tax year access
+  sources/              Official source access
+  audit/                Append-only audit trail
+prisma/                 Schema, migrations and seed
 tests/unit/             Unit tests
-docs/                   SPECIFICATION.md (authoritative) + this file
+tests/integration/      Database-backed tests
+docs/                   SPECIFICATION.md (authoritative), DATA-MODEL.md, this file
 ```
 
 Directories are created only when they hold real code. Empty scaffolding folders for future
@@ -215,13 +239,21 @@ phases are intentionally absent.
 
 ```
 tests/unit/          Pure, fast, no IO            (exists)
-tests/integration/   Database / route level       (added when those exist)
+tests/integration/   Database-backed              (exists — requires PostgreSQL)
 tests/golden/        Verified tax fixtures        (Phase 4+)
 tests/e2e/           Full browser flows           (Phase 12)
 ```
 
-Phase 1 tests cover money arithmetic, environment validation, error handling, logger
-redaction, validation helpers, health payloads and SEO helpers.
+Unit tests cover money arithmetic, environment validation, error handling, logger redaction,
+validation helpers, health payloads, SEO helpers, and the Phase 2 rule categories, payload
+schemas, lifecycle, verification semantics, validation and resolution.
+
+Integration tests run against a real PostgreSQL database and cover schema integrity,
+effective-date versioning, the overlap exclusion constraint, source traceability, NUMERIC
+precision, conflicts, audit immutability and deletion safeguards.
+
+**Integration suites skip when `DATABASE_URL` is unset**, so `npm test` still works without
+PostgreSQL. Run `npm run test:db` to execute them explicitly.
 
 **No test contains a tax rate, bracket, threshold or wage base.** Tax fixtures must come from
 verified official sources and are introduced with the engine (spec §61; CLAUDE.md §4, §9).
@@ -259,3 +291,11 @@ usually means the schema changed since — run `npm run db:generate`. (If you in
 
 **404 on a URL without a trailing slash**
 Expected: `trailingSlash: true`. Next.js redirects; use the trailing-slash form directly.
+
+**`23P01` / "conflicting key value violates exclusion constraint"**
+Two ACTIVE versions of the same `ruleKey` cover the same period. Supersede the previous
+version instead of adding a second active one — see `docs/DATA-MODEL.md` §4.
+
+**`P2003` / foreign key constraint failed on delete**
+Expected: jurisdictions, tax years and sources referenced by rules cannot be deleted.
+Deactivate or archive them instead — see `docs/DATA-MODEL.md` §11.

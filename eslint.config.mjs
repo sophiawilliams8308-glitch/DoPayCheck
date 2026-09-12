@@ -46,6 +46,15 @@ const config = [
       'no-console': 'off',
     },
   },
+
+  {
+    // Command-line scripts report progress on stdout; the structured logger targets the
+    // running application, not one-shot CLI tooling.
+    files: ['prisma/seed.ts'],
+    rules: {
+      'no-console': 'off',
+    },
+  },
 ];
 
 export default config;

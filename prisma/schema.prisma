@@ -1,23 +1,24 @@
 // DoPayCheck — Prisma schema
 //
-// PHASE 1 SCOPE: connection + migration foundation ONLY.
+// PHASE 2: Rule & Data System.
 //
-// This schema intentionally declares NO models.
+// This schema is the authoritative data architecture for tax rules. It is built around four
+// invariants taken from the Master Specification (docs/SPECIFICATION.md §2, §18–§23):
 //
-// Why: the complete tax-rule data architecture (rules, versions, effective dates,
-// jurisdictions, tax years, sources, verification, approval, publishing, rollback and
-// historical preservation — spec §2, §18–§23) is designed in PHASE 2. Creating models now
-// would mean guessing that architecture and then migrating away from the guess. The Phase 1
-// instruction is explicit: do not create speculative business models.
+//   1. Tax values are DATA, never code. A new tax year is new rows, not a new release.
+//   2. Rules are VERSIONED and EFFECTIVE-DATED. `taxYear` alone never decides which rule
+//      applies — effective dates are first-class and authoritative.
+//   3. Published history is IMMUTABLE. Corrections supersede; they never overwrite.
+//   4. Every authoritative value is SOURCE-TRACEABLE and carries a verification status.
 //
-// No placeholder or "bootstrap" model is required either: the application boots without one,
-// and database connectivity is verified with a raw `SELECT 1` (see lib/db/client.ts), which
-// needs no model definitions.
+// NAMING: Prisma's default identifier mapping is used (PascalCase tables, camelCase columns).
+// Raw SQL in migrations therefore quotes identifiers. This keeps the ORM the single access
+// path and avoids a large surface of hand-written @map annotations that could silently drift.
 //
-// Phase 2 adds the real models plus their first migration.
+// DECIMAL PRECISION: authoritative numeric values use NUMERIC(28,12) — see TaxRuleValue.
 //
-// NOTE (Prisma 7): the datasource block no longer carries `url`. The connection string is
-// supplied by `prisma.config.ts` for CLI/migrate, and by a driver adapter at runtime.
+// NOT_STATED IS NEVER ZERO: every authoritative numeric column is NULLABLE. A missing value
+// is stored as NULL with a verification status, never coerced to 0 (spec §19).
 
 generator client {
   provider = "prisma-client-js"
@@ -26,4 +27,459 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+}
+
+// ===========================================================================
+// ENUMS
+// ===========================================================================
+
+/// Levels of taxing authority. Spec §9 — ZIP code alone is never a jurisdiction.
+enum JurisdictionType {
+  FEDERAL
+  STATE
+  COUNTY
+  CITY
+  LOCALITY
+  SCHOOL_DISTRICT
+  OTHER
+}
+
+/// Lifecycle of a tax year container (spec §23).
+enum TaxYearStatus {
+  DRAFT
+  PREPARATION
+  ACTIVE
+  CLOSED
+  ARCHIVED
+}
+
+/// Rule categories (spec §20). Strongly typed so category strings are never scattered.
+enum RuleCategory {
+  FEDERAL_INCOME_TAX
+  FEDERAL_WITHHOLDING
+  SOCIAL_SECURITY
+  MEDICARE
+  STATE_INCOME_TAX
+  STATE_WITHHOLDING
+  DISABILITY_SDI
+  PAID_LEAVE
+  SUTA
+  MINIMUM_WAGE
+  OVERTIME
+  RECIPROCITY
+  LOCAL_TAX
+}
+
+/// Rule lifecycle (spec §18). A rule must never reach ACTIVE without verification+approval.
+enum RuleStatus {
+  DRAFT
+  PENDING_REVIEW
+  APPROVED
+  ACTIVE
+  SUPERSEDED
+  REJECTED
+  ROLLED_BACK
+  BLOCKED
+}
+
+/// Verification status (spec §19).
+///
+/// NOT_APPLICABLE and NOT_STATED are deliberately distinct:
+///   NOT_APPLICABLE — the rule/component genuinely does not apply.
+///   NOT_STATED     — the official source does not state a value.
+/// Neither may ever be converted to zero.
+enum VerificationStatus {
+  VERIFIED
+  NOT_APPLICABLE
+  PENDING
+  CONFLICT
+  PARTIALLY_VERIFIED
+  NOT_STATED
+}
+
+/// Kind of official document a source represents (spec §21).
+enum SourceType {
+  STATUTE
+  REGULATION
+  PUBLICATION
+  FORM
+  INSTRUCTIONS
+  BULLETIN
+  NOTICE
+  WEBPAGE
+  DATASET
+  OTHER
+}
+
+/// Sources are archived, never destructively deleted once referenced (spec §29).
+enum SourceStatus {
+  ACTIVE
+  ARCHIVED
+  SUPERSEDED
+}
+
+/// Conflicting sources must be representable without silent resolution (spec §24).
+enum ConflictStatus {
+  OPEN
+  INVESTIGATING
+  RESOLVED
+  ACCEPTED_AMBIGUITY
+  DISMISSED
+}
+
+/// Auditable actions (spec §31). Audit records are append-only.
+enum AuditAction {
+  CREATE
+  EDIT
+  DUPLICATE
+  APPROVE
+  REJECT
+  PUBLISH
+  ROLLBACK
+  ARCHIVE
+  RESTORE
+  DELETE
+  RESET
+  IMPORT
+  EXPORT
+}
+
+/// Semantic type of a stored authoritative value, so consumers never guess units.
+enum ValueType {
+  RATE
+  PERCENT
+  MONEY
+  MULTIPLIER
+  COUNT
+  DURATION_DAYS
+  BOOLEAN
+  TEXT
+}
+
+// ===========================================================================
+// JURISDICTIONS
+// ===========================================================================
+
+/// A taxing jurisdiction: federal, state, county, city or other local authority.
+///
+/// Hierarchical via self-relation so locality resolution (Phase 6) can walk ancestors.
+/// ZIP codes are deliberately NOT modelled as jurisdictions — a ZIP is at best an input aid
+/// to resolution, never the legal authority (spec §9).
+model Jurisdiction {
+  id   String           @id @default(cuid())
+  /// Stable machine identifier, e.g. "US", "US-CA", "US-PA-PHILADELPHIA".
+  code String           @unique
+  /// URL-safe identifier used by public routes, e.g. "california" (spec §35/§36).
+  slug String           @unique
+  name String
+  type JurisdictionType
+
+  parentId String?
+  parent   Jurisdiction?  @relation("JurisdictionHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  children Jurisdiction[] @relation("JurisdictionHierarchy")
+
+  /// Denormalized two-letter state code for fast filtering of sub-state jurisdictions.
+  stateCode String?
+  /// Census FIPS code where one exists. Reference data, not tax data.
+  fipsCode  String?
+
+  /// Jurisdictions are deactivated, never destructively deleted once referenced (spec §29).
+  isActive      Boolean   @default(true)
+  effectiveFrom DateTime?
+  effectiveTo   DateTime?
+
+  notes    String?
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  taxRules TaxRule[]
+
+  @@index([type])
+  @@index([parentId])
+  @@index([stateCode])
+  @@index([isActive])
+}
+
+// ===========================================================================
+// TAX YEARS
+// ===========================================================================
+
+/// A tax year container. Any year is representable; nothing is hardcoded to 2026.
+///
+/// A tax year groups rules for administration and reporting. It does NOT decide which rule
+/// version applies at a point in time — effective dates do (spec §23).
+model TaxYear {
+  id     Int           @id @default(autoincrement())
+  year   Int           @unique
+  status TaxYearStatus @default(DRAFT)
+
+  /// Period the tax year covers. Usually the calendar year, but stored explicitly rather
+  /// than assumed so non-calendar periods remain representable.
+  startDate DateTime
+  endDate   DateTime
+
+  /// At most one tax year may be flagged current; enforced by a partial unique index.
+  isCurrent Boolean @default(false)
+
+  notes    String?
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  taxRules TaxRule[]
+
+  @@index([status])
+  @@index([isCurrent])
+}
+
+// ===========================================================================
+// SOURCES
+// ===========================================================================
+
+/// An official document that authorises tax rule data (spec §21).
+///
+/// Sources are never invented. A rule without a verified source must not reach ACTIVE.
+model Source {
+  id           String     @id @default(cuid())
+  /// Stable human-usable identifier, e.g. "IRS-PUB-15-T-2026".
+  code         String     @unique
+  /// Issuing agency or organisation, e.g. "Internal Revenue Service".
+  organization String
+  title        String
+  sourceType   SourceType
+
+  /// Official URL. NEVER fabricated — null when not yet recorded.
+  url             String?
+  publicationDate DateTime?
+  effectiveDate   DateTime?
+  /// Revision/edition identifier printed on the document, when it has one.
+  documentVersion String?
+
+  notes  String?
+  status SourceStatus @default(ACTIVE)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  ruleSources     TaxRuleSource[]
+  conflictsAsA    RuleConflict[]  @relation("ConflictSourceA")
+  conflictsAsB    RuleConflict[]  @relation("ConflictSourceB")
+
+  @@index([organization])
+  @@index([sourceType])
+  @@index([status])
+}
+
+// ===========================================================================
+// TAX RULES
+// ===========================================================================
+
+/// A single versioned, effective-dated tax rule for one jurisdiction and category.
+///
+/// VERSIONING MODEL
+///   `ruleKey` identifies the CONCEPTUAL rule (stable across versions and years).
+///   `version` increments for each new record sharing that key.
+///   A correction creates a NEW row and marks the previous one SUPERSEDED — published rows
+///   are never rewritten (spec §23, §29).
+///
+/// RESOLUTION
+///   The applicable rule is chosen by jurisdiction + category + effective date + lifecycle
+///   status. `taxYearId` is for administration and reporting, never the deciding factor.
+model TaxRule {
+  id      String @id @default(cuid())
+  /// Stable conceptual identifier shared by every version of this rule.
+  ruleKey String
+  version Int    @default(1)
+
+  taxYearId      Int
+  taxYear        TaxYear      @relation(fields: [taxYearId], references: [id], onDelete: Restrict)
+  jurisdictionId String
+  jurisdiction   Jurisdiction @relation(fields: [jurisdictionId], references: [id], onDelete: Restrict)
+
+  category    RuleCategory
+  name        String
+  description String?
+
+  /// Scenario matching for Phase 3+ (e.g. filing status, pay frequency, residency).
+  /// Structure is validated in the domain layer, not guessed here.
+  applicability Json?
+  conditions    Json?
+  exceptions    Json?
+
+  /// Category-specific structured payload (brackets, tables, formulas).
+  /// NULL while PENDING DATA — an absent payload is never an empty object of zeros.
+  payload              Json?
+  /// Schema version of `payload`, so payload shapes can evolve without data loss.
+  payloadSchemaVersion Int   @default(1)
+
+  /// AUTHORITATIVE. Effective dates decide applicability, not `taxYear`.
+  effectiveFrom DateTime
+  /// NULL means open-ended (still in force).
+  effectiveTo   DateTime?
+
+  status             RuleStatus         @default(DRAFT)
+  verificationStatus VerificationStatus @default(PENDING)
+
+  /// Links a correction to the version it replaces, preserving history.
+  supersedesId String?  @unique
+  supersedes   TaxRule? @relation("RuleSupersession", fields: [supersedesId], references: [id], onDelete: Restrict)
+  supersededBy TaxRule? @relation("RuleSupersession")
+
+  approvedBy  String?
+  approvedAt  DateTime?
+  publishedAt DateTime?
+  archivedAt  DateTime?
+
+  notes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  values    TaxRuleValue[]
+  sources   TaxRuleSource[]
+  conflicts RuleConflict[]
+
+  @@unique([ruleKey, version])
+  @@index([taxYearId])
+  @@index([jurisdictionId])
+  @@index([category])
+  @@index([status])
+  @@index([ruleKey])
+  @@index([effectiveFrom, effectiveTo])
+  @@index([jurisdictionId, category, status])
+}
+
+/// One authoritative numeric or textual component of a rule.
+///
+/// WHY THIS TABLE EXISTS ALONGSIDE `TaxRule.payload`:
+///   JSONB is right for irregular category-specific structure, but JSON numbers are IEEE-754
+///   doubles — unacceptable for authoritative tax values (spec §4). Every value that must be
+///   exact is stored here in PostgreSQL NUMERIC and read back through decimal.js.
+///
+/// PRECISION: NUMERIC(28,12) — 12 fractional digits carry rates such as 0.062 and any
+/// published fractional rate without loss; the remaining 16 integer digits exceed any
+/// realistic wage base or monetary threshold.
+///
+/// `numericValue` IS NULLABLE BY DESIGN. A source that does not state a value yields NULL
+/// plus verificationStatus = NOT_STATED. It is never written as 0 (spec §19).
+model TaxRuleValue {
+  id        String  @id @default(cuid())
+  taxRuleId String
+  taxRule   TaxRule @relation(fields: [taxRuleId], references: [id], onDelete: Cascade)
+
+  /// Component name, e.g. "employeeRate", "wageBase", "additionalMedicareThreshold".
+  key       String
+  valueType ValueType
+
+  /// Groups related components, e.g. a filing status or a named bracket set.
+  /// Empty string (not NULL) so the uniqueness constraint stays enforceable.
+  groupKey String @default("")
+  /// Ordering within a group, e.g. bracket index.
+  ordinal  Int    @default(0)
+
+  /// Exact authoritative number. NULL when not stated by the source.
+  numericValue Decimal? @db.Decimal(28, 12)
+  /// Non-numeric authoritative value (e.g. a method name).
+  textValue    String?
+  /// Unit or denomination, e.g. "USD", "fraction", "hours_per_week".
+  unit         String?
+
+  verificationStatus VerificationStatus @default(PENDING)
+  notes              String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([taxRuleId, groupKey, ordinal, key])
+  @@index([taxRuleId])
+  @@index([key])
+  @@index([verificationStatus])
+}
+
+/// Links a rule to an official source WITH a precise locator (spec §21).
+///
+/// Granular enough to answer: which rule, which version, which source, which page/table,
+/// verified by whom and when.
+model TaxRuleSource {
+  id        String  @id @default(cuid())
+  taxRuleId String
+  taxRule   TaxRule @relation(fields: [taxRuleId], references: [id], onDelete: Cascade)
+  sourceId  String
+  source    Source  @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+
+  page       String?
+  section    String?
+  subsection String?
+  table      String?
+  heading    String?
+  /// Full citation/locator string as an administrator would write it.
+  citation   String?
+  /// Verbatim excerpt supporting the value. Never paraphrased into a value.
+  excerpt    String?
+
+  verificationStatus VerificationStatus @default(PENDING)
+  verifiedBy         String?
+  verifiedAt         DateTime?
+  notes              String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([taxRuleId])
+  @@index([sourceId])
+  @@index([verificationStatus])
+}
+
+/// A recorded disagreement between sources about a rule (spec §24).
+///
+/// A conflict is represented, never silently resolved. An unresolved conflict blocks
+/// activation — enforced in the domain layer and asserted by tests.
+model RuleConflict {
+  id        String  @id @default(cuid())
+  taxRuleId String
+  taxRule   TaxRule @relation(fields: [taxRuleId], references: [id], onDelete: Cascade)
+
+  sourceAId String?
+  sourceA   Source? @relation("ConflictSourceA", fields: [sourceAId], references: [id], onDelete: Restrict)
+  sourceBId String?
+  sourceB   Source? @relation("ConflictSourceB", fields: [sourceBId], references: [id], onDelete: Restrict)
+
+  description     String
+  status          ConflictStatus @default(OPEN)
+  resolutionNotes String?
+  resolvedBy      String?
+  resolvedAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([taxRuleId])
+  @@index([status])
+}
+
+/// Append-only audit trail (spec §31). Audit records are never updated or deleted.
+model AuditLog {
+  id     String      @id @default(cuid())
+  action AuditAction
+
+  /// Entity name, e.g. "TaxRule", and its primary key.
+  entityType String
+  entityId   String
+
+  /// Who performed the action. Real identity arrives with authentication (Phase 8).
+  actor  String
+  reason String?
+
+  oldValue Json?
+  newValue Json?
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([action])
+  @@index([createdAt])
 }
