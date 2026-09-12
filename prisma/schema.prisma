@@ -738,3 +738,60 @@ model LocalTaxRule {
   @@index([localJurisdictionId])
   @@index([taxType])
 }
+
+// ===========================================================================
+// PHASE 3 — CALCULATION SNAPSHOT
+// ===========================================================================
+
+/// An immutable record of one calculation (spec §40).
+///
+/// PURPOSE: historical reproducibility. A report issued today must remain explainable after
+/// the underlying tax rules change, so the snapshot stores the INPUT, the NORMALIZED input,
+/// the RESULT, and the exact rule IDs/versions and source IDs that produced it — together
+/// with the engine version, because methodology changes too.
+///
+/// The JSON columns hold engine output verbatim. Every monetary value inside them is an exact
+/// decimal STRING, never a JSON number, so serialization cannot reintroduce IEEE-754 error
+/// (spec §4).
+///
+/// Snapshots are append-only in practice: a recalculation creates a new row rather than
+/// rewriting history.
+model CalculationSnapshot {
+  id String @id @default(cuid())
+
+  /// Engine build that produced this result. Bumped when methodology changes.
+  engineVersion String
+
+  taxYear Int
+
+  /// The instant the calculation applied to — decides which rule versions were in force.
+  effectiveDate DateTime
+
+  /// Jurisdiction codes the calculation resolved against.
+  federalCode String
+  stateCode   String?
+  localCodes  String[]
+
+  /// Overall calculation status (COMPLETE, INCOMPLETE, RULE_CONFLICT, …).
+  status String
+
+  /// Caller-supplied input, exactly as received.
+  originalInput   Json
+  /// Input after structural normalization.
+  normalizedInput Json
+  /// Full engine result, including the calculation trace.
+  result          Json
+
+  /// Rule identities and versions relied upon, denormalized so the snapshot stays
+  /// reproducible even if a rule row is later superseded or archived.
+  ruleReferences Json
+  /// Official source IDs behind those rules.
+  sourceIds      String[]
+
+  createdAt DateTime @default(now())
+
+  @@index([taxYear])
+  @@index([status])
+  @@index([createdAt])
+  @@index([engineVersion])
+}
