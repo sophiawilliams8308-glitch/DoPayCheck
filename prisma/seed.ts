@@ -1,6 +1,8 @@
 import { JurisdictionType, PrismaClient, TaxYearStatus } from '../lib/db/generated/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 
+import { loadEnvFile } from '../lib/config/env-file';
+
 /**
  * DoPayCheck — foundational seed.
  *
@@ -24,7 +26,25 @@ import { PrismaPg } from '@prisma/adapter-pg';
  * ===========================================================================
  *
  * Idempotent: safe to re-run. Uses upsert throughout, so it never overwrites rule data.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY `.env` IS LOADED HERE
+ *
+ * `prisma.config.ts` loads `.env`, but that config belongs to the Prisma CLI PROCESS. This
+ * file is also run directly — `npm run db:seed` is `tsx prisma/seed.ts` — and a direct run
+ * never reads that config, so `process.env.DATABASE_URL` arrives empty and the seed aborts
+ * even though the developer has a valid `.env`.
+ *
+ * The same helper the Prisma config uses is reused here rather than reimplemented, so the
+ * precedence rule holds identically in both: a real environment variable always wins over the
+ * file, and a missing `.env` never throws. Under `npx prisma db seed` the CLI has already
+ * populated the environment it hands down, so this call simply finds the value present and
+ * leaves it alone.
+ * ---------------------------------------------------------------------------
  */
+
+// Must run before DATABASE_URL is read below. Never overrides a real environment variable.
+loadEnvFile();
 
 const FEDERAL_CODE = 'US';
 
@@ -92,7 +112,8 @@ const TAX_YEARS: readonly number[] = [2025, 2026, 2027];
 async function main(): Promise<void> {
   const connectionString = process.env['DATABASE_URL'];
   if (connectionString === undefined || connectionString === '') {
-    throw new Error('DATABASE_URL must be set to run the seed');
+    // Never echo the value or any part of it — only that it is absent, and where we looked.
+    throw new Error('DATABASE_URL must be set to run the seed (checked the environment and .env)');
   }
 
   const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
