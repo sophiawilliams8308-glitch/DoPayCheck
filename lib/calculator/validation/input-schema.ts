@@ -149,6 +149,11 @@ export const calculationInputSchema = z.object({
     otherIncome: nonNegativeDecimal.optional(),
     deductionsAmount: nonNegativeDecimal.optional(),
     additionalWithholding: nonNegativeDecimal.optional(),
+    // Phase 4 additive fields. Optional, so every existing caller stays valid.
+    w4Revision: z.enum(['PRE_2020', 'REVISION_2020_PLUS']).optional(),
+    claimsExemption: z.boolean().optional(),
+    isNonresidentAlien: z.boolean().optional(),
+    pre2020Allowances: z.number().int().min(0).optional(),
   }),
   preTaxDeductions: z.array(deductionSchema).optional(),
   postTaxDeductions: z.array(deductionSchema).optional(),

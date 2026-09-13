@@ -25,8 +25,11 @@ import type {
   TaxableWages,
 } from './types/result';
 import type { ResolvedRuleSet, RuleReference } from './types/rules';
+import type { FederalCalculationResult } from '@/lib/tax/federal/types';
 import { CalculationStatus, combineStatuses } from './types/status';
 import { validateInput } from './validation/input-schema';
+import { runFederalEngine, type FederalOptions } from './federal-bridge';
+import { periodsPerYear as resolvePeriodsPerYear } from './pipeline/pay-frequency';
 
 /**
  * DoPayCheck calculation engine — public entry point (spec §4).
@@ -59,6 +62,14 @@ export interface CalculationOptions {
   readonly rounding: RoundingPolicy;
   /** Rules resolved for this scenario. */
   readonly rules: ResolvedRuleSet;
+  /**
+   * Phase 4 federal engine, opt-in.
+   *
+   * Supply a resolved federal rule set and the federal, FICA and employer components come
+   * from the federal engine instead of the Phase 3 placeholders. Omit it and the pipeline
+   * behaves exactly as it did in Phase 3.
+   */
+  readonly federal?: FederalOptions;
 }
 
 function toDeductionBreakdown(items: readonly DeductionResult[], total: Money): DeductionBreakdown {
@@ -145,6 +156,7 @@ function invalidInputResult(
     sourceIds: [],
     trace: [],
     issues,
+    federalEngine: null,
   };
 }
 
@@ -259,8 +271,36 @@ export function calculatePaycheck(
     );
 
     // --- 8-11. federal / FICA / state / local -------------------------------------------
-    const federal = evaluateComponents(FEDERAL_COMPONENTS, options.rules, wages);
-    const fica = evaluateComponents(FICA_COMPONENTS, options.rules, wages);
+    // Phase 4: when a federal rule set is supplied the federal engine produces the federal,
+    // FICA and employer figures. Without one, the Phase 3 placeholders stand unchanged.
+    let federalResult: FederalCalculationResult | null = null;
+    let federalOverride: readonly TaxComponent[] | null = null;
+    let ficaOverride: readonly TaxComponent[] | null = null;
+    let employerOverride: readonly TaxComponent[] | null = null;
+
+    if (options.federal !== undefined) {
+      const periods = resolvePeriodsPerYear(input.pay.payFrequency, input.pay.periodsPerYear);
+      if (periods.known) {
+        const supplemental = toStorageString(sum([gross.bonus, gross.commission]));
+        const regular = toStorageString(gross.total.minus(sum([gross.bonus, gross.commission])));
+        const outcome = runFederalEngine(
+          input,
+          wages,
+          periods.periods,
+          regular,
+          supplemental,
+          options.federal,
+          preTaxResult.items,
+        );
+        federalResult = outcome.federal;
+        federalOverride = outcome.federalComponents;
+        ficaOverride = outcome.ficaComponents;
+        employerOverride = outcome.employerComponents;
+      }
+    }
+
+    const federal = federalOverride ?? evaluateComponents(FEDERAL_COMPONENTS, options.rules, wages);
+    const fica = ficaOverride ?? evaluateComponents(FICA_COMPONENTS, options.rules, wages);
     const state = evaluateComponents(STATE_COMPONENTS, options.rules, wages);
     const local = evaluateComponents(LOCAL_COMPONENTS, options.rules, wages);
 
@@ -296,7 +336,8 @@ export function calculatePaycheck(
 
     // --- 13. calculateEmployerTaxes -----------------------------------------------------
     // Employer liabilities are reported separately and NEVER reduce employee net pay.
-    const employerTaxes = evaluateComponents(EMPLOYER_COMPONENTS, options.rules, wages);
+    const employerTaxes =
+      employerOverride ?? evaluateComponents(EMPLOYER_COMPONENTS, options.rules, wages);
     trace.addStep(
       TraceStep.EMPLOYER_TAXES,
       'Employer liabilities computed separately from employee pay',
@@ -388,6 +429,7 @@ export function calculatePaycheck(
       sourceIds,
       trace: trace.build(),
       issues: [],
+      federalEngine: federalResult,
     };
   } catch (error) {
     // An unexpected failure is an engine defect, not a data state (spec §16).

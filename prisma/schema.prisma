@@ -788,6 +788,19 @@ model CalculationSnapshot {
   /// Official source IDs behind those rules.
   sourceIds      String[]
 
+  /// PHASE 4 — the federal block (D-SNAP-1).
+  ///
+  /// Holds the RESOLVED federal rule DETAIL as it stood at calculation time — rates, wage
+  /// bases, thresholds and schedule rows — not merely the rule IDs. Storing only IDs would
+  /// make a historical result depend on rows that versioning is designed to change; with the
+  /// detail embedded, publishing a later rule cannot move an old answer.
+  ///
+  /// Also carries the worksheet line-level intermediates, wage buckets, disclosures and the
+  /// feature-flag values in force, which is what the Phase 8 Federal Rule Audit screen reads.
+  ///
+  /// NULL for snapshots taken before Phase 4, and for calculations with no federal component.
+  federal Json?
+
   createdAt DateTime @default(now())
 
   @@index([taxYear])

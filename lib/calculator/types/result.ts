@@ -1,5 +1,7 @@
 import type { PayFrequency } from '@/lib/db/generated/client';
 
+import type { FederalCalculationResult } from '@/lib/tax/federal/types';
+
 import type { TraceEntry } from '../trace/trace';
 import type { RuleReference } from './rules';
 import type { CalculationStatus, IncompleteReason } from './status';
@@ -112,4 +114,15 @@ export interface CalculationResult {
   readonly sourceIds: readonly string[];
   readonly trace: readonly TraceEntry[];
   readonly issues: readonly { readonly path: string; readonly message: string }[];
+
+  /**
+   * Phase 4 federal engine output, when a federal rule set was supplied.
+   *
+   * Carries the four-track breakdown, worksheet intermediates, disclosures and feature flags.
+   * `null` when the caller ran the Phase 3 pipeline without federal rules.
+   *
+   * Named `federalEngine` because `federal` above is the federal COMPONENT list; this is the
+   * engine's full four-track output.
+   */
+  readonly federalEngine: FederalCalculationResult | null;
 }

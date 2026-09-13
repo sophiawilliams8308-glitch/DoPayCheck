@@ -84,14 +84,51 @@ export interface PayInput {
   readonly periodsPerYear?: number;
 }
 
-/** W-4 foundation (spec §14). Shapes only — no methodology is implemented in Phase 3. */
+/**
+ * W-4 revision the employee's form belongs to (spec §14).
+ *
+ * The two revisions use DIFFERENT withholding methodologies and are never blended: a pre-2020
+ * form claims allowances, a 2020+ form uses Steps 2-4. Absent, the 2020+ revision applies,
+ * which is the form in use for every new hire.
+ */
+export type W4RevisionKey = 'PRE_2020' | 'REVISION_2020_PLUS';
+
+/**
+ * W-4 foundation (spec §14).
+ *
+ * Phase 3 established the shapes; Phase 4 added the four fields the federal withholding
+ * methodology needs. The Phase 3 names are deliberately KEPT: the federal engine maps them to
+ * IRS worksheet vocabulary internally (`multipleJobs` is Step 2, `dependentsAmount` Step 3,
+ * `otherIncome` Step 4(a), `deductionsAmount` Step 4(b), `additionalWithholding` Step 4(c)),
+ * so callers are not forced to adopt form line numbers and there is only ever one W-4 type.
+ */
 export interface W4Input {
   readonly filingStatus: FilingStatusKey;
+  /** Step 2 checkbox — the employee has two jobs total, or a working spouse. */
   readonly multipleJobs?: boolean;
+  /** Step 3 — annual credits for dependants. */
   readonly dependentsAmount?: DecimalString;
+  /** Step 4(a) — annual other income not from jobs. */
   readonly otherIncome?: DecimalString;
+  /**
+   * Step 4(b) — annual deductions beyond the standard deduction.
+   *
+   * Under OBBBA this line also carries qualified tips and qualified overtime, which is why no
+   * separate field exists for them. It reduces INCOME TAX withholding only: those wages stay
+   * fully subject to Social Security and Medicare.
+   */
   readonly deductionsAmount?: DecimalString;
+  /** Step 4(c) — extra withholding PER PAY PERIOD, not annual. */
   readonly additionalWithholding?: DecimalString;
+
+  /** Which W-4 revision this form is. Defaults to the 2020+ redesign. */
+  readonly w4Revision?: W4RevisionKey;
+  /** The employee claims exemption from federal income tax withholding. */
+  readonly claimsExemption?: boolean;
+  /** The employee is a nonresident alien for withholding purposes. */
+  readonly isNonresidentAlien?: boolean;
+  /** Pre-2020 forms only: the number of allowances claimed. Never assumed. */
+  readonly pre2020Allowances?: number;
 }
 
 /** Which taxable-wage buckets a deduction reduces. Absent means "not reduced". */
