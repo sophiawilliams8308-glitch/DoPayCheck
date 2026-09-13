@@ -8,5 +8,8 @@ package-lock.json
 # Authoritative project files — must never be reformatted.
 # docs/SPECIFICATION.md is the Master Specification (verbatim, byte-stable).
 # CLAUDE.md is the Claude Code operating instruction file.
+# docs/PHASE-4-FEDERAL-TAX-ENGINE-SPEC.md is the approved Phase 4 specification, supplied
+# verbatim; reformatting it would break byte-for-byte comparison with the source document.
 docs/SPECIFICATION.md
+docs/PHASE-4-FEDERAL-TAX-ENGINE-SPEC.md
 CLAUDE.md

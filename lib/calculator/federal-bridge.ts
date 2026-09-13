@@ -1,19 +1,16 @@
 import { money, toStorageString, zero } from '@/lib/core/money';
 
-import { calculateFederalTaxes, FEDERAL_ROUNDING_V1 } from '@/lib/tax/federal';
+import { calculateFederalTaxes, SupplementalMethod } from '@/lib/tax/federal';
 import { toFederalW4 } from '@/lib/tax/federal/context';
 import { DEFAULT_FEDERAL_FLAGS, type FederalFeatureFlags } from '@/lib/tax/federal/flags';
-import type { FederalRoundingPolicy } from '@/lib/tax/federal/rounding/federal-rounding';
 import type { ResolvedFederalRuleSet } from '@/lib/tax/federal/rules/resolved-rule-set';
 import type {
-  FederalAmount,
-  FederalCalculationResult,
-  FederalWageBuckets,
-  FederalYtd,
-} from '@/lib/tax/federal/types';
+  DeductionTaxabilityProfile,
+  FederalDeductionLine,
+} from '@/lib/tax/federal/wages/federalWageBuckets';
+import type { FederalAmount, FederalCalculationResult, FederalYtd } from '@/lib/tax/federal/types';
 
 import type { DeductionResult } from './pipeline/deductions';
-import type { TaxableWageResult } from './pipeline/taxable-wages';
 import type { CalculationInput } from './types/input';
 import type { TaxComponent } from './types/result';
 
@@ -23,49 +20,25 @@ import type { TaxComponent } from './types/result';
  * ===========================================================================
  * ONE ENGINE, EXTENDED — NOT A SECOND ENGINE.
  *
- * `calculatePaycheck` remains the single entry point and keeps its pipeline. This module
- * translates between the two contracts: Phase 3's wage buckets and deductions go in, the
- * federal engine's amounts come back as ordinary `TaxComponent`s, and everything downstream
- * (totals, net pay, trace, snapshot) works unchanged.
- *
- * When no federal rule set is supplied the bridge is not called at all, so Phase 3 behaviour
- * is bit-for-bit what it was.
+ * `calculatePaycheck` stays the single entry point and keeps its pipeline. This
+ * module translates between the two contracts. When no federal rule set is
+ * supplied the bridge is never called, so Phase 3 behaviour is bit-for-bit what
+ * it was.
  * ===========================================================================
  */
 
 export interface FederalOptions {
   readonly ruleSet: ResolvedFederalRuleSet;
   readonly flags?: FederalFeatureFlags;
-  readonly rounding?: FederalRoundingPolicy;
-  /** YTD EXCLUDING the current pay period (D-SS-1). */
-  readonly ytd?: FederalYtd;
+  /** YTD EXCLUDING the current pay period (spec §13.4). */
+  readonly ytd?: Partial<Omit<FederalYtd, 'assumedZero'>>;
+  /** Taxability profile per deduction type key (spec §12.2). */
+  readonly taxabilityProfiles?: Readonly<Record<string, DeductionTaxabilityProfile>>;
+  readonly supplementalMethod?: SupplementalMethod;
+  readonly federalIncomeTaxWithheldFromRegularWagesCurrentOrPriorYear?: boolean;
+  readonly employerSubjectToFuta?: boolean;
   readonly includeAnnualEstimate?: boolean;
   readonly includeEmployerTaxes?: boolean;
-}
-
-/** Phase 3's seven buckets, narrowed to the four the federal engine consumes. */
-export function toFederalBuckets(wages: TaxableWageResult): FederalWageBuckets {
-  return {
-    federalIncomeTaxWages: toStorageString(wages.federalIncomeTax.taxableWages),
-    socialSecurityWages: toStorageString(wages.socialSecurity.taxableWages),
-    medicareWages: toStorageString(wages.medicare.taxableWages),
-    futaWages: toStorageString(wages.futa.taxableWages),
-  };
-}
-
-/** YTD defaults to zero — meaning "nothing earned yet this year", a stated starting point. */
-export function toFederalYtd(input: CalculationInput, override?: FederalYtd): FederalYtd {
-  if (override !== undefined) {
-    return override;
-  }
-  const z = toStorageString(zero());
-  return {
-    socialSecurityWages: input.ytd?.socialSecurityWages ?? z,
-    medicareWages: input.ytd?.medicareWages ?? z,
-    // Phase 3's YtdInput has no FUTA field; absent means none used yet this year.
-    futaWages: z,
-    federalWithholding: input.ytd?.federalWithholding ?? z,
-  };
 }
 
 function toComponent(amount: FederalAmount): TaxComponent {
@@ -81,6 +54,20 @@ function toComponent(amount: FederalAmount): TaxComponent {
   };
 }
 
+/** Maps Phase 3 deduction lines onto the federal engine's contract. */
+export function toFederalDeductions(
+  items: readonly DeductionResult[],
+): readonly FederalDeductionLine[] {
+  return items.map((item) => ({
+    id: item.id,
+    // Phase 3 identifies a deduction by its id; the federal engine resolves a
+    // taxability profile by type key, and the id is the type key by convention
+    // until Phase 3 carries an explicit one.
+    deductionTypeKey: item.input.deductionTypeKey ?? item.id,
+    amount: item.amount,
+  }));
+}
+
 export interface FederalBridgeOutcome {
   readonly federal: FederalCalculationResult;
   readonly federalComponents: readonly TaxComponent[];
@@ -88,21 +75,21 @@ export interface FederalBridgeOutcome {
   readonly employerComponents: readonly TaxComponent[];
 }
 
-/** Runs the federal engine for one period and maps its output onto Phase 3 components. */
+/** Runs the federal engine for one period and maps its output to Phase 3. */
 export function runFederalEngine(
   input: CalculationInput,
-  wages: TaxableWageResult,
-  periodsPerYear: number,
   grossRegular: string,
   grossSupplemental: string,
+  preTaxDeductions: readonly DeductionResult[],
   options: FederalOptions,
-  _preTaxDeductions: readonly DeductionResult[],
 ): FederalBridgeOutcome {
+  const ytd = options.ytd ?? {};
+  const anyYtd = Object.values(ytd).some((value) => value !== undefined);
+
   const result = calculateFederalTaxes({
     taxYear: input.taxYear,
     effectiveDate: input.effectiveDate.toISOString(),
     payFrequency: input.pay.payFrequency,
-    periodsPerYear,
     w4: toFederalW4(input.w4),
     wages: {
       regular: grossRegular,
@@ -110,22 +97,35 @@ export function runFederalEngine(
       tips: input.pay.tips ?? toStorageString(zero()),
       qualifiedOvertime: toStorageString(zero()),
     },
-    buckets: toFederalBuckets(wages),
-    ytd: toFederalYtd(input, options.ytd),
+    deductions: toFederalDeductions(preTaxDeductions),
+    taxabilityProfiles: options.taxabilityProfiles ?? {},
+    ytd: {
+      socialSecurityWages: ytd.socialSecurityWages ?? input.ytd?.socialSecurityWages ?? '0',
+      medicareWages: ytd.medicareWages ?? input.ytd?.medicareWages ?? '0',
+      futaWages: ytd.futaWages ?? '0',
+      supplementalWages: ytd.supplementalWages ?? '0',
+      assumedZero: !anyYtd && input.ytd === undefined,
+    },
     ruleSet: options.ruleSet,
-    rounding: options.rounding ?? FEDERAL_ROUNDING_V1,
     flags: options.flags ?? DEFAULT_FEDERAL_FLAGS,
+    supplementalMethod: options.supplementalMethod ?? SupplementalMethod.AGGREGATE,
+    federalIncomeTaxWithheldFromRegularWagesCurrentOrPriorYear:
+      options.federalIncomeTaxWithheldFromRegularWagesCurrentOrPriorYear ?? false,
+    employerSubjectToFuta: options.employerSubjectToFuta ?? true,
     includeAnnualEstimate: options.includeAnnualEstimate ?? false,
     includeEmployerTaxes: options.includeEmployerTaxes ?? true,
   });
 
   return {
     federal: result,
-    federalComponents: [toComponent(result.withholding.total)],
+    federalComponents: [
+      toComponent(result.employee.federalIncomeTaxWithheld),
+      toComponent(result.employee.supplementalWithheld),
+    ],
     ficaComponents: [
-      toComponent(result.fica.socialSecurityEmployee),
-      toComponent(result.fica.medicareEmployee),
-      toComponent(result.fica.additionalMedicareEmployee),
+      toComponent(result.employee.socialSecurityEmployee),
+      toComponent(result.employee.medicareEmployee),
+      toComponent(result.employee.additionalMedicareEmployee),
     ],
     employerComponents:
       result.employer === null
@@ -133,12 +133,12 @@ export function runFederalEngine(
         : [
             toComponent(result.employer.socialSecurityEmployer),
             toComponent(result.employer.medicareEmployer),
-            toComponent(result.employer.futa),
+            toComponent(result.employer.futaEmployer),
           ],
   };
 }
 
-/** Exposed so callers can size a period's regular wages consistently with the engine. */
+/** Regular wages = gross total minus the supplemental portion. */
 export function regularWagesFrom(grossTotal: string, supplemental: string): string {
   return toStorageString(money(grossTotal).minus(money(supplemental)));
 }

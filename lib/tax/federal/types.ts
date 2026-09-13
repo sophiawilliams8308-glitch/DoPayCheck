@@ -1,112 +1,137 @@
-import type { PayFrequency } from '@/lib/db/generated/client';
 import type { CalculationStatus } from '@/lib/calculator/types/status';
 import type { RuleReference } from '@/lib/calculator/types/rules';
 
-import type { FederalTraceEntry } from './trace/federal-trace';
-
-import type { FederalUnavailable } from './errors/federal-errors';
+import type { FederalUnavailable, MissingRuleIssue } from './errors/federal-errors';
 import type { FederalFeatureFlags } from './flags';
 import type { FederalRoundingPolicy } from './rounding/federal-rounding';
 import type { ResolvedFederalRuleSet } from './rules/resolved-rule-set';
+import type { FederalTraceEntry } from './trace/federal-trace';
+import type { SupplementalMethod } from './fit/supplemental';
+import type { DeductionTaxabilityProfile, FederalDeductionLine } from './wages/federalWageBuckets';
 
 /**
- * Federal engine types (Phase 4).
+ * Federal engine types — spec §17.1 result contract.
  *
- * Money crosses every boundary as an exact decimal STRING, matching Phase 3. A JS `number`
- * may already have lost precision before the engine sees it.
+ * Money crosses every boundary as an exact decimal STRING: a JS `number` may
+ * already have lost precision before the engine sees it.
  */
 
 export type DecimalString = string;
 
-/** W-4 revision the employee's form belongs to. Methodologies differ, and never blend. */
+/** W-4 revision. The two use DIFFERENT methodologies and never blend (§7.1). */
 export const W4Revision = {
-  /** Pre-2020 form: allowances, Worksheet 1A lines 1j–1l. */
   PRE_2020: 'PRE_2020',
-  /** 2020 redesign onward: Steps 2–4. */
   REVISION_2020_PLUS: 'REVISION_2020_PLUS',
 } as const;
 
-export type W4Revision = (typeof W4Revision)[keyof typeof W4Revision];
+export type W4RevisionValue = (typeof W4Revision)[keyof typeof W4Revision];
 
 /**
- * The federal view of the W-4, derived from the Phase 3 `W4Input`.
+ * UNITS DISCIPLINE (§7.3).
  *
- * This is an ADAPTER, not a second W-4 model. Phase 3 owns the input contract; the federal
- * engine renames its fields to worksheet vocabulary internally so the code reads like the
- * published form, without forcing Phase 3 to adopt IRS line numbers.
+ * Steps 3, 4(a), 4(b), line 1g and the allowance value are ANNUAL. Step 4(c) is
+ * PER PAY PERIOD. Mixing them is the most common bug in this area, so the two
+ * are branded types: passing one where the other is expected is a COMPILE
+ * ERROR, not a naming convention.
+ */
+declare const annualBrand: unique symbol;
+declare const perPeriodBrand: unique symbol;
+
+export type AnnualAmount = DecimalString & { readonly [annualBrand]: 'ANNUAL' };
+export type PerPeriodAmount = DecimalString & { readonly [perPeriodBrand]: 'PER_PERIOD' };
+
+export function asAnnual(value: DecimalString): AnnualAmount {
+  return value as AnnualAmount;
+}
+
+export function asPerPeriod(value: DecimalString): PerPeriodAmount {
+  return value as PerPeriodAmount;
+}
+
+/**
+ * The federal view of the W-4 (§7.1, §7.2).
+ *
+ * An ADAPTER over Phase 3's `W4Input`, not a second model: Phase 3 owns the
+ * input contract, and this renames its fields to worksheet vocabulary so the
+ * withholding code reads like the published form (D-W4-1).
  */
 export interface FederalW4 {
-  readonly revision: W4Revision;
+  readonly revision: W4RevisionValue;
   readonly filingStatus: string;
-  /** Step 2 checkbox — "two jobs total". Phase 3 field: `multipleJobs`. */
+  /** Step 2(c) checkbox: selects the STEP2_CHECKBOX schedule and zeroes line 1g. */
   readonly step2MultipleJobsChecked: boolean;
-  /** Step 3 annual credits. Phase 3 field: `dependentsAmount`. */
-  readonly step3CreditsAnnual: DecimalString | null;
-  /** Step 4(a) annual other income. Phase 3 field: `otherIncome`. */
-  readonly step4aOtherIncomeAnnual: DecimalString | null;
-  /** Step 4(b) annual deductions. Phase 3 field: `deductionsAmount`. */
-  readonly step4bDeductionsAnnual: DecimalString | null;
-  /** Step 4(c) extra withholding PER PAY PERIOD. Phase 3 field: `additionalWithholding`. */
-  readonly step4cExtraPerPeriod: DecimalString | null;
-  /** Employee claims exemption from withholding. */
+  readonly step3CreditsAnnual: AnnualAmount | null;
+  readonly step4aOtherIncomeAnnual: AnnualAmount | null;
+  readonly step4bDeductionsAnnual: AnnualAmount | null;
+  /** PER PAY PERIOD — must never be divided by pay periods (§11.2). */
+  readonly step4cExtraPerPeriod: PerPeriodAmount | null;
+  /** New 2026 checkbox below Step 4(c) (§5.5). */
   readonly claimsExemption: boolean;
   readonly isNonresidentAlien: boolean;
-  /** Pre-2020 only: number of allowances claimed. */
+  /** 2019-or-earlier forms only. */
   readonly pre2020Allowances: number | null;
 }
 
-/** Wages for the current pay period, split by federal treatment. */
 export interface FederalPeriodWages {
-  /** Regular wages subject to Worksheet 1A. */
   readonly regular: DecimalString;
-  /** Supplemental wages (bonus, commission) handled by the supplemental path. */
   readonly supplemental: DecimalString;
-  /** Reported tips. Subject to FICA; never a wage-bucket reduction. */
+  /** Ordinary wages for all four buckets (§19.5). */
   readonly tips: DecimalString;
-  /** Qualified overtime under OBBBA. Subject to FICA; never a wage-bucket reduction. */
+  /** Ordinary wages for all four buckets. OBBBA relief runs via Step 4(b). */
   readonly qualifiedOvertime: DecimalString;
 }
 
 /**
- * Year-to-date figures.
+ * YTD figures — from THIS employer, EXCLUDING the current period (§13.4/§16.2).
  *
- * CONVENTION (D-SS-1): these EXCLUDE the current pay period. Wage-base and threshold logic
- * therefore reads "how much room is left before this cheque", which is what makes
- * `min(base − ytd, currentPeriod)` correct.
+ * Defaulting to zero is permitted but must be DISCLOSED in the trace: a silent
+ * zero would misstate mid-year and high-earner paychecks.
  */
 export interface FederalYtd {
   readonly socialSecurityWages: DecimalString;
   readonly medicareWages: DecimalString;
   readonly futaWages: DecimalString;
-  readonly federalWithholding: DecimalString;
+  readonly supplementalWages: DecimalString;
+  /** True when the caller supplied nothing and zero was assumed. */
+  readonly assumedZero: boolean;
 }
 
-/** Federal-relevant taxable wage buckets for this period. */
+/**
+ * The four independent federal wage buckets (§12).
+ *
+ * `null` means the bucket COULD NOT BE DETERMINED — a deduction's treatment for
+ * it is unknown or NOT_STATED. It is never zero and never a fallback: every tax
+ * that reads a null bucket reports INCOMPLETE instead of producing a figure
+ * (§12.2). Zeroing a bucket here would understate wages and silently under-
+ * withhold, with no visible symptom.
+ */
 export interface FederalWageBuckets {
-  readonly federalIncomeTaxWages: DecimalString;
-  readonly socialSecurityWages: DecimalString;
-  readonly medicareWages: DecimalString;
-  readonly futaWages: DecimalString;
+  readonly federalIncomeTaxWages: DecimalString | null;
+  readonly socialSecurityWages: DecimalString | null;
+  readonly medicareWages: DecimalString | null;
+  readonly futaWages: DecimalString | null;
 }
 
 /** Everything Stage B needs. Pure input — no client, no clock, no environment. */
 export interface FederalCalculationContext {
   readonly taxYear: number;
-  /** ISO instant. Supplied by the caller; the engine never reads a clock. */
+  /** ISO instant, supplied by the caller. The engine never reads a clock. */
   readonly effectiveDate: string;
-  readonly payFrequency: PayFrequency;
-  /** Resolved by the caller so Stage B performs no frequency policy decisions. */
-  readonly periodsPerYear: number;
+  readonly payFrequency: string;
   readonly w4: FederalW4;
   readonly wages: FederalPeriodWages;
-  readonly buckets: FederalWageBuckets;
+  readonly deductions: readonly FederalDeductionLine[];
+  readonly taxabilityProfiles: Readonly<Record<string, DeductionTaxabilityProfile>>;
   readonly ytd: FederalYtd;
   readonly ruleSet: ResolvedFederalRuleSet;
-  readonly rounding: FederalRoundingPolicy;
   readonly flags: FederalFeatureFlags;
-  /** Whether the caller wants the Track A display-only estimate. */
+  /** Explicit employer election — never inferred (§5.6). */
+  readonly supplementalMethod: SupplementalMethod;
+  /** §5.6 rule 2 eligibility condition for the optional flat method. */
+  readonly federalIncomeTaxWithheldFromRegularWagesCurrentOrPriorYear: boolean;
+  /** §18.7 — the statutory employer tests cannot be evaluated here. */
+  readonly employerSubjectToFuta: boolean;
   readonly includeAnnualEstimate: boolean;
-  /** Whether the caller wants Track D employer liabilities. */
   readonly includeEmployerTaxes: boolean;
 }
 
@@ -120,40 +145,38 @@ export interface FederalAmount {
   readonly rules: readonly RuleReference[];
 }
 
-/** Worksheet 1A line-level intermediates, retained for traceability. */
 export type WorksheetLines = Readonly<Record<string, DecimalString | null>>;
 
-export interface FederalWithholdingResult {
-  readonly method: 'PUB15T_WORKSHEET_1A' | 'SUPPLEMENTAL' | 'NONE';
-  readonly regular: FederalAmount;
-  readonly supplemental: FederalAmount;
-  /** Step 4(c) extra, preserved separately so it is never silently absorbed or discarded. */
-  readonly extraPerPeriod: FederalAmount;
-  readonly total: FederalAmount;
-  readonly worksheetLines: WorksheetLines;
-}
-
-export interface FederalFicaResult {
+/** §17.1 — employee branch. Net pay is computed from this and nothing else. */
+export interface FederalEmployeeResult {
+  readonly federalIncomeTaxWithheld: FederalAmount;
+  readonly supplementalWithheld: FederalAmount;
   readonly socialSecurityEmployee: FederalAmount;
   readonly medicareEmployee: FederalAmount;
   readonly additionalMedicareEmployee: FederalAmount;
+  readonly totalEmployeeFederalTaxes: FederalAmount;
 }
 
+/** §17.1 — employer branch. Never reaches net pay. */
 export interface FederalEmployerResult {
   readonly socialSecurityEmployer: FederalAmount;
   readonly medicareEmployer: FederalAmount;
-  readonly futa: FederalAmount;
-  readonly total: FederalAmount;
+  readonly futaEmployer: FederalAmount;
+  readonly totalEmployerFederalTaxes: FederalAmount;
+  readonly disclosures: readonly string[];
 }
 
-export interface FederalAnnualEstimate {
-  /** DISPLAY ONLY. This must never be used as a withholding amount. */
-  readonly displayOnly: true;
-  readonly liability: FederalAmount;
-  readonly taxableIncome: FederalAmount;
+/** §17.1 — Track A. Display only; `available: false` never fails the paycheck. */
+export interface FederalEstimates {
+  readonly isEstimate: true;
+  readonly available: boolean;
+  readonly annualFederalIncomeTaxEstimate: DecimalString | null;
+  readonly effectiveFederalRateEstimate: DecimalString | null;
+  readonly taxableIncome: DecimalString | null;
+  readonly limitations: readonly string[];
+  readonly unavailableReason: string | null;
 }
 
-/** A statement the UI must show alongside a result, e.g. "estimate only". */
 export interface FederalDisclosure {
   readonly code: string;
   readonly message: string;
@@ -164,20 +187,22 @@ export interface FederalCalculationResult {
   readonly engineVersion: string;
   readonly taxYear: number;
   readonly effectiveDate: string;
-  readonly methodology: string;
+  readonly methodology: {
+    readonly fitMethod: string;
+    readonly supplementalMethod: SupplementalMethod | null;
+    readonly roundingPolicy: FederalRoundingPolicy | null;
+  };
   readonly buckets: FederalWageBuckets;
-  /** Track B. */
-  readonly withholding: FederalWithholdingResult;
-  /** Track C. */
-  readonly fica: FederalFicaResult;
-  /** Track D. Null when the caller did not request employer taxes. */
+  readonly worksheetLines: WorksheetLines;
+  readonly employee: FederalEmployeeResult;
   readonly employer: FederalEmployerResult | null;
-  /** Track A. Null when the caller did not request the estimate. */
-  readonly annualEstimate: FederalAnnualEstimate | null;
+  readonly estimates: FederalEstimates | null;
   readonly disclosures: readonly FederalDisclosure[];
   readonly flags: FederalFeatureFlags;
   readonly ruleReferences: readonly RuleReference[];
   readonly sourceIds: readonly string[];
   readonly trace: readonly FederalTraceEntry[];
   readonly issues: readonly FederalUnavailable[];
+  /** Machine-readable gaps for admin tooling and the coverage gate (§28.2). */
+  readonly missingRules: readonly MissingRuleIssue[];
 }

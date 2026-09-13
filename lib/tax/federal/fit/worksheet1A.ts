@@ -21,51 +21,57 @@ import {
   readOk,
 } from '../rules/read-detail';
 import type { ResolvedFederalRuleSet } from '../rules/resolved-rule-set';
-import type { Pre2020AllowanceDetail, Worksheet1ADetail } from '../rules/detail-schemas';
+import type {
+  AmountByFilingStatusDetail,
+  ScalarAmountDetail,
+  WithholdingScheduleDetail,
+} from '../rules/detail-schemas';
 import { W4Revision, type FederalW4, type WorksheetLines } from '../types';
 import { annualize, deannualize } from './pay-periods';
-import { findRow, selectSchedule } from './rate-schedule';
+import { findRow, selectSchedule, validateScheduleRows } from './rate-schedule';
 
 /**
- * IRS Publication 15-T, Worksheet 1A — percentage method (Phase 4, Track B).
+ * IRS Publication 15-T, Worksheet 1A — spec §5.3. Track B, THE PAYCHECK NUMBER.
  *
  * ===========================================================================
- * THE ONLY PATH TO A PAYCHECK WITHHOLDING FIGURE.
+ * A LINE-FOR-LINE TRANSCRIPTION, DELIBERATELY NOT SIMPLIFIED.
  *
- * Annual 1040 brackets are never substituted here. The worksheet annualizes the period's
- * wages, adjusts them by the W-4 steps, applies a WITHHOLDING rate schedule, then divides
- * back down to the period. Skipping to annual brackets would produce a plausible number that
- * is not what the employer is required to withhold.
+ * Each worksheet line is a named intermediate that appears in the trace. The
+ * algebra could be collapsed, and must not be: the line correspondence is what
+ * makes output auditable against the published IRS worksheet, and what makes a
+ * future-year change safe to review (§5.3).
+ *
+ * Annual 1040 brackets are never substituted here (§5.7).
  * ===========================================================================
  *
- * EVERY LINE IS RETAINED. The worksheet's intermediate lines are the explanation an employee
- * is owed, so each is recorded rather than collapsed into one arithmetic expression.
- *
- * A BLANK W-4 LINE IS ZERO — AND THAT IS NOT AN INVENTED TAX VALUE. When an employee leaves
- * Step 4(a) empty they have stated "no other income". That is caller-supplied fact, entirely
- * unlike a missing rate, which stays PENDING and blocks the calculation.
+ * A BLANK W-4 LINE IS ZERO — AND THAT IS NOT AN INVENTED TAX VALUE. An employee
+ * leaving Step 4(a) empty has stated "no other income". That is caller-supplied
+ * fact, wholly unlike a missing rate, which stays PENDING and blocks.
  */
 
-/** Reads an optional W-4 money line. Absent means the employee left the line blank. */
+/** Reads an optional W-4 money line. Absent means the employee left it blank. */
 function w4Line(value: string | null): Money {
   return value === null ? zero() : money(value);
 }
 
 export interface Worksheet1AResult {
-  /** Withholding for this pay period, before Step 4(c) is added. */
+  /** Line 3c — withholding for the period before Step 4(c). */
   readonly beforeExtra: Money;
-  /** Step 4(c) extra, kept separate so it is visible and never silently absorbed. */
+  /** Line 4a — Step 4(c) extra, kept separate so it is never absorbed silently. */
   readonly extraPerPeriod: Money;
+  /** Line 4b — the amount to withhold. */
   readonly total: Money;
   readonly lines: WorksheetLines;
+  readonly scheduleType: 'STANDARD' | 'STEP2_CHECKBOX';
+  readonly selectedRowOrder: number;
   readonly ruleKeys: readonly string[];
 }
 
 /**
  * Runs Worksheet 1A for one pay period.
  *
- * `taxableWages` is the period's FEDERAL INCOME TAX bucket — already reduced by whichever
- * pre-tax deductions reduce that specific bucket (Phase 3 decides that, per deduction).
+ * `taxableWages` is the period's federalIncomeTaxWages bucket — already reduced
+ * by whichever pre-tax deductions reduce that specific bucket (§19).
  */
 export function runWorksheet1A(
   ruleSet: ResolvedFederalRuleSet,
@@ -74,20 +80,13 @@ export function runWorksheet1A(
   periodsPerYear: number,
   policy: FederalRoundingPolicy,
 ): Read<Worksheet1AResult> {
-  const found = readDetail(ruleSet, FederalRuleKey.FIT_WORKSHEET_1A);
-  if (!found.ok) {
-    return readFail(found.problem);
-  }
-  const detail = found.value.detail as Worksheet1ADetail;
-  const ruleKey = found.value.ruleKey;
-  const ruleKeys: string[] = [ruleKey];
-
+  const ruleKeys: string[] = [];
   const lines: Record<string, string | null> = {};
   const put = (line: string, value: Money): void => {
     lines[line] = toStorageString(value);
   };
 
-  // --- Step 1: adjusted annual wage amount -------------------------------------------
+  // ===================== STEP 1 — adjust the payment amount =====================
   const line1a = taxableWages;
   put('1a', line1a);
   lines['1b'] = String(periodsPerYear);
@@ -95,107 +94,130 @@ export function runWorksheet1A(
   const line1c = annualize(line1a, periodsPerYear);
   put('1c', line1c);
 
-  const line1d = w4Line(w4.step4aOtherIncomeAnnual);
-  put('1d', line1d);
+  let adjustedAnnualWage: Money;
 
-  const line1e = add(line1c, line1d);
-  put('1e', line1e);
+  if (w4.revision === W4Revision.REVISION_2020_PLUS) {
+    const line1d = w4Line(w4.step4aOtherIncomeAnnual);
+    put('1d', line1d);
 
-  const line1f = w4Line(w4.step4bDeductionsAnnual);
-  put('1f', line1f);
+    const line1e = add(line1c, line1d);
+    put('1e', line1e);
 
-  // Line 1g: zero when the Step 2 box is checked; otherwise the worksheet's own standard
-  // amount for the filing status. This is a Pub. 15-T figure, NOT the annual 1040 standard
-  // deduction, and it comes from rule data.
-  let line1g: Money;
-  if (w4.step2MultipleJobsChecked) {
-    line1g = zero();
-  } else {
-    const standard = requireForFilingStatus(
-      detail.standardDeductionAmounts,
-      w4.filingStatus,
-      ruleKey,
-      'standardDeductionAmounts',
-    );
-    if (!standard.ok) {
-      return readFail(standard.problem);
+    const line1f = w4Line(w4.step4bDeductionsAnnual);
+    put('1f', line1f);
+
+    // Line 1g: zero when the Step 2 box is checked, else the filing-status
+    // amount from rule data. This is a Pub. 15-T figure, NOT the annual 1040
+    // standard deduction.
+    let line1g: Money;
+    if (w4.step2MultipleJobsChecked) {
+      line1g = zero();
+    } else {
+      const adjustmentRule = readDetail(ruleSet, FederalRuleKey.FIT_STEP2_UNCHECKED_ADJUSTMENT);
+      if (!adjustmentRule.ok) {
+        return readFail(adjustmentRule.problem);
+      }
+      ruleKeys.push(FederalRuleKey.FIT_STEP2_UNCHECKED_ADJUSTMENT);
+      const adjustmentDetail = adjustmentRule.value.detail as AmountByFilingStatusDetail;
+      const amount = requireForFilingStatus(
+        adjustmentDetail.amounts,
+        w4.filingStatus,
+        FederalRuleKey.FIT_STEP2_UNCHECKED_ADJUSTMENT,
+        'amounts',
+      );
+      if (!amount.ok) {
+        return readFail(amount.problem);
+      }
+      line1g = amount.value;
     }
-    line1g = standard.value;
-  }
-  put('1g', line1g);
+    put('1g', line1g);
 
-  const line1h = add(line1f, line1g);
-  put('1h', line1h);
+    const line1h = add(line1f, line1g);
+    put('1h', line1h);
 
-  // Never negative: deductions exceeding wages cannot create a negative wage base.
-  const line1i = max(subtract(line1e, line1h), zero());
-  put('1i', line1i);
-
-  // --- Pre-2020 W-4: lines 1j–1l ------------------------------------------------------
-  // A historical form is NEVER reinterpreted as a current one. It takes its own allowance
-  // path, and without the allowance rule the calculation is INCOMPLETE, not approximated.
-  let adjustedAnnualWage = line1i;
-
-  if (w4.revision === W4Revision.PRE_2020) {
-    const allowanceRule = readDetail(ruleSet, FederalRuleKey.FIT_PRE2020_ALLOWANCE);
+    // FIT-INV-1: floors at zero.
+    const line1i = max(subtract(line1e, line1h), zero());
+    put('1i', line1i);
+    adjustedAnnualWage = line1i;
+  } else {
+    // ---- 2019-or-earlier Form W-4: lines 1j-1l --------------------------------
+    // A historical form is NEVER reinterpreted as a current one (§7.2).
+    const allowanceRule = readDetail(ruleSet, FederalRuleKey.FIT_ALLOWANCE_VALUE);
     if (!allowanceRule.ok) {
       return readFail(allowanceRule.problem);
     }
-    const allowanceDetail = allowanceRule.value.detail as Pre2020AllowanceDetail;
-    ruleKeys.push(allowanceRule.value.ruleKey);
+    ruleKeys.push(FederalRuleKey.FIT_ALLOWANCE_VALUE);
+    const allowanceDetail = allowanceRule.value.detail as ScalarAmountDetail;
 
     if (w4.pre2020Allowances === null) {
       return readFail(
         unavailable(
           FederalReason.INPUT_INVALID,
-          'A pre-2020 W-4 requires the number of allowances claimed; it is not assumed',
-          allowanceRule.value.ruleKey,
+          'A 2019-or-earlier Form W-4 requires the number of allowances claimed; it is not assumed',
+          FederalRuleKey.FIT_ALLOWANCE_VALUE,
           'pre2020Allowances',
         ),
       );
     }
 
     const perAllowance = requireComponent(
-      allowanceDetail.allowanceAmount,
-      allowanceRule.value.ruleKey,
-      'allowanceAmount',
+      allowanceDetail.amount,
+      FederalRuleKey.FIT_ALLOWANCE_VALUE,
+      'amount',
     );
     if (!perAllowance.ok) {
       return readFail(perAllowance.problem);
     }
 
-    const line1j = money(String(w4.pre2020Allowances));
     lines['1j'] = String(w4.pre2020Allowances);
-
-    const line1k = multiply(line1j, perAllowance.value);
+    const line1k = multiply(money(String(w4.pre2020Allowances)), perAllowance.value);
     put('1k', line1k);
 
-    const line1l = max(subtract(line1i, line1k), zero());
+    // FIT-INV-1: floors at zero.
+    const line1l = max(subtract(line1c, line1k), zero());
     put('1l', line1l);
-
     adjustedAnnualWage = line1l;
   }
 
-  // --- Step 2: tentative withholding from the rate schedule ---------------------------
-  const schedule = selectSchedule(detail, w4.filingStatus, w4.step2MultipleJobsChecked, ruleKey);
+  // ===================== STEP 2 — tentative withholding =========================
+  const scheduleKey = w4.step2MultipleJobsChecked
+    ? FederalRuleKey.FIT_RATE_SCHEDULE_STEP2
+    : FederalRuleKey.FIT_RATE_SCHEDULE_STANDARD;
+
+  const scheduleRule = readDetail(ruleSet, scheduleKey);
+  if (!scheduleRule.ok) {
+    return readFail(scheduleRule.problem);
+  }
+  ruleKeys.push(scheduleKey);
+  const scheduleDetail = scheduleRule.value.detail as WithholdingScheduleDetail;
+
+  const schedule = selectSchedule(scheduleDetail, w4.filingStatus, scheduleKey);
   if (!schedule.ok) {
     return readFail(schedule.problem);
   }
 
-  const match = findRow(schedule.value.rows, adjustedAnnualWage, ruleKey);
+  // FIT-INV-5 / FIT-INV-6, re-asserted at resolution rather than trusted.
+  const structure = validateScheduleRows(schedule.value.rows, scheduleKey, w4.filingStatus);
+  if (!structure.ok) {
+    return readFail(structure.problem);
+  }
+
+  // FIT-INV-4 / FIT-INV-7: exactly one row, never interpolated.
+  const match = findRow(schedule.value.rows, adjustedAnnualWage, scheduleKey);
   if (!match.ok) {
     return readFail(match.problem);
   }
 
-  put('2a', adjustedAnnualWage);
-  put('2b', match.value.excessOver);
+  const line2a = adjustedAnnualWage;
+  put('2a', line2a);
+  put('2b', match.value.atLeast);
   put('2c', match.value.baseAmount);
-  lines['2d'] = toStorageString(match.value.marginalRate);
+  lines['2d'] = toStorageString(match.value.rate);
 
-  const line2e = max(subtract(adjustedAnnualWage, match.value.excessOver), zero());
+  const line2e = max(subtract(line2a, match.value.atLeast), zero());
   put('2e', line2e);
 
-  const line2f = multiply(line2e, match.value.marginalRate);
+  const line2f = multiply(line2e, match.value.rate);
   put('2f', line2f);
 
   const line2g = add(match.value.baseAmount, line2f);
@@ -204,22 +226,28 @@ export function runWorksheet1A(
   const line2h = deannualize(line2g, periodsPerYear, policy);
   put('2h', line2h);
 
-  // --- Step 3: tax credits -------------------------------------------------------------
-  const line3a = w4Line(w4.step3CreditsAnnual);
+  // ===================== STEP 3 — tax credits ===================================
+  // Step 3 is forced to zero for a 2019-or-earlier form (§10.1).
+  const line3a =
+    w4.revision === W4Revision.REVISION_2020_PLUS ? w4Line(w4.step3CreditsAnnual) : zero();
   put('3a', line3a);
 
   const line3b = deannualize(line3a, periodsPerYear, policy);
   put('3b', line3b);
 
+  // FIT-INV-2: credits can zero withholding, never make it negative.
   const line3c = max(subtract(line2h, line3b), zero());
   put('3c', line3c);
 
-  // --- Step 4: extra withholding -------------------------------------------------------
-  // Rounded here — this is the tax-level rounding point for Track B.
+  // ===================== STEP 4 — final amount ==================================
+  // Tax-level rounding happens here, once (§22).
   const beforeExtra = roundTax(line3c, policy);
+
+  // Step 4(c) is PER PAY PERIOD and must not be divided by periods (§11.2).
   const line4a = w4Line(w4.step4cExtraPerPeriod);
   put('4a', line4a);
 
+  // FIT-INV-3: 4(c) only ever increases withholding.
   const total = roundTax(add(beforeExtra, line4a), policy);
   put('4b', total);
 
@@ -228,6 +256,8 @@ export function runWorksheet1A(
     extraPerPeriod: line4a,
     total,
     lines: Object.freeze(lines),
+    scheduleType: scheduleDetail.scheduleType,
+    selectedRowOrder: match.value.row.rowOrder,
     ruleKeys,
   });
 }

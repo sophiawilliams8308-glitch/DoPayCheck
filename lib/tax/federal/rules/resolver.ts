@@ -3,8 +3,14 @@ import { getPrisma } from '@/lib/db/client';
 import type { RuleReference } from '@/lib/calculator/types/rules';
 import { ResolutionStatus, resolveApplicableRules } from '@/lib/rules/resolution';
 
-import { FederalReason, unavailable } from '../errors/federal-errors';
+import {
+  FederalReason,
+  MissingRuleReason,
+  type MissingRuleIssue,
+  unavailable,
+} from '../errors/federal-errors';
 import { FederalRuleKey, requiredRuleKeys, type FederalScenario } from '../rule-keys';
+import { checkTrackBProvenance } from './provenance';
 import {
   freezeRuleSet,
   type FederalRuleEntry,
@@ -30,20 +36,35 @@ import {
  * resolve is recorded with the reason it did not.
  */
 
-/** Which Phase 2 category each federal key is filed under. */
+/** Which Phase 2 category each federal key is filed under (§2.5). */
 const KEY_CATEGORY: Record<FederalRuleKey, RuleCategory> = {
-  'FED.FIT.WORKSHEET_1A': 'FEDERAL_WITHHOLDING',
-  'FED.FIT.SUPPLEMENTAL': 'FEDERAL_WITHHOLDING',
-  'FED.FIT.NRA_ADJUSTMENT': 'FEDERAL_WITHHOLDING',
-  'FED.FIT.PRE2020_ALLOWANCE': 'FEDERAL_WITHHOLDING',
-  'FED.ANNUAL.RATE_SCHEDULE': 'FEDERAL_INCOME_TAX',
+  'FED.FIT.RATE_SCHEDULE.ANNUAL.STANDARD': 'FEDERAL_WITHHOLDING',
+  'FED.FIT.RATE_SCHEDULE.ANNUAL.STEP2_CHECKBOX': 'FEDERAL_WITHHOLDING',
+  'FED.FIT.W4.STEP2_UNCHECKED_ADJUSTMENT': 'FEDERAL_WITHHOLDING',
+  'FED.FIT.W4.ALLOWANCE_VALUE': 'FEDERAL_WITHHOLDING',
+  'FED.FIT.PAY_PERIODS_PER_YEAR': 'FEDERAL_WITHHOLDING',
+  'FED.FIT.ROUNDING_POLICY': 'FEDERAL_WITHHOLDING',
+  'FED.FIT.NRA_WAGE_ADDITION.PRE2020': 'FEDERAL_WITHHOLDING',
+  'FED.FIT.NRA_WAGE_ADDITION.POST2019': 'FEDERAL_WITHHOLDING',
+  'FED.FIT.COMPUTATIONAL_BRIDGE': 'FEDERAL_WITHHOLDING',
+  'FED.SUPP.OPTIONAL_FLAT_RATE': 'FEDERAL_WITHHOLDING',
+  'FED.SUPP.MANDATORY_FLAT_RATE': 'FEDERAL_WITHHOLDING',
+  'FED.SUPP.MANDATORY_THRESHOLD': 'FEDERAL_WITHHOLDING',
+  'FED.SS.EMPLOYEE_RATE': 'SOCIAL_SECURITY',
+  'FED.SS.EMPLOYER_RATE': 'SOCIAL_SECURITY',
+  'FED.SS.WAGE_BASE': 'SOCIAL_SECURITY',
+  'FED.MEDICARE.EMPLOYEE_RATE': 'MEDICARE',
+  'FED.MEDICARE.EMPLOYER_RATE': 'MEDICARE',
+  'FED.MEDICARE.WAGE_BASE': 'MEDICARE',
+  'FED.ADDL_MEDICARE.EMPLOYEE_RATE': 'MEDICARE',
+  'FED.ADDL_MEDICARE.WITHHOLDING_THRESHOLD': 'MEDICARE',
+  // Dedicated category, per D-FUTA-1.
+  'FED.FUTA.GROSS_RATE': 'FUTA',
+  'FED.FUTA.STANDARD_CREDIT': 'FUTA',
+  'FED.FUTA.WAGE_BASE': 'FUTA',
   'FED.ANNUAL.STANDARD_DEDUCTION': 'FEDERAL_INCOME_TAX',
-  'FED.FICA.SOCIAL_SECURITY': 'SOCIAL_SECURITY',
-  'FED.FICA.MEDICARE': 'MEDICARE',
-  'FED.FICA.ADDITIONAL_MEDICARE': 'MEDICARE',
-  // PENDING DECISION: Phase 2's RuleCategory enum has no FUTA member, so FUTA is filed as a
-  // federal employer obligation under SOCIAL_SECURITY. Whether to add a category is open.
-  'FED.FUTA.STANDARD': 'SOCIAL_SECURITY',
+  'FED.ANNUAL.PERSONAL_EXEMPTION': 'FEDERAL_INCOME_TAX',
+  'FED.ANNUAL.RATE_BRACKETS': 'FEDERAL_INCOME_TAX',
 };
 
 export interface FederalResolutionQuery {
@@ -52,6 +73,13 @@ export interface FederalResolutionQuery {
   readonly scenario: FederalScenario;
   /** Federal jurisdiction code. Defaults to the root federal jurisdiction. */
   readonly jurisdictionCode?: string;
+  /** Engine build recording itself into the frozen set (§2.4). */
+  readonly engineVersion: string;
+  /**
+   * Metadata only — never used in arithmetic (§2.4). Supplied by the caller so
+   * even resolution stays free of a hidden clock read.
+   */
+  readonly resolvedAt: Date;
 }
 
 /**
@@ -132,6 +160,15 @@ export async function resolveFederalRuleSet(
       taxYear: query.taxYear,
       effectiveDate: query.effectiveDate.toISOString(),
       jurisdictionCode,
+      engineVersion: query.engineVersion,
+      resolvedAt: query.resolvedAt.toISOString(),
+      missing: keys.map((key) => ({
+        ruleKey: key,
+        category: KEY_CATEGORY[key],
+        taxYear: query.taxYear,
+        effectiveDate: query.effectiveDate.toISOString(),
+        reason: MissingRuleReason.NO_RULE,
+      })),
       entries,
       ruleReferences: [],
       sourceIds: [],
@@ -150,11 +187,29 @@ export async function resolveFederalRuleSet(
     },
     include: {
       taxYear: { select: { year: true } },
-      sources: { select: { sourceId: true, verificationStatus: true } },
+      sources: {
+        select: {
+          sourceId: true,
+          verificationStatus: true,
+          // Read for the Track B provenance check (§35.4) — never for a value.
+          source: { select: { code: true, title: true } },
+        },
+      },
     },
   });
 
   const references: RuleReference[] = [];
+  const missing: MissingRuleIssue[] = [];
+
+  const recordMissing = (key: FederalRuleKey, reason: MissingRuleReason): void => {
+    missing.push({
+      ruleKey: key,
+      category: KEY_CATEGORY[key],
+      taxYear: query.taxYear,
+      effectiveDate: query.effectiveDate.toISOString(),
+      reason,
+    });
+  };
 
   for (const key of keys) {
     const candidates = rows.filter((row) => row.ruleKey === key);
@@ -179,6 +234,12 @@ export async function resolveFederalRuleSet(
     );
 
     if (resolution.status === ResolutionStatus.NOT_FOUND) {
+      recordMissing(
+        key,
+        candidates.length === 0
+          ? MissingRuleReason.NO_RULE
+          : MissingRuleReason.NO_EFFECTIVE_VERSION,
+      );
       entries[key] = {
         available: false,
         problem: unavailable(FederalReason.RULE_MISSING, resolution.reason, key),
@@ -201,6 +262,7 @@ export async function resolveFederalRuleSet(
 
     const row = candidates.find((candidate) => candidate.id === resolution.rule.id);
     if (row === undefined) {
+      recordMissing(key, MissingRuleReason.NO_RULE);
       entries[key] = {
         available: false,
         problem: unavailable(FederalReason.RULE_MISSING, 'Resolved rule could not be re-read', key),
@@ -209,6 +271,18 @@ export async function resolveFederalRuleSet(
     }
 
     const sourceIds = row.sources.map((link) => link.sourceId);
+
+    // §35.4 — a withholding schedule that does not cite Pub. 15-T is refused, never used.
+    const provenanceProblem = checkTrackBProvenance(
+      key,
+      row.sources.map((link) => link.source),
+    );
+    if (provenanceProblem !== null) {
+      recordMissing(key, MissingRuleReason.SOURCE_PROVENANCE_MISMATCH);
+      entries[key] = { available: false, problem: provenanceProblem };
+      continue;
+    }
+
     // A rule counts as verified only when a source link is itself VERIFIED. An attached but
     // unverified source does not make a rule authoritative.
     const sourceVerified = row.sources.some((link) => link.verificationStatus === 'VERIFIED');
@@ -245,6 +319,9 @@ export async function resolveFederalRuleSet(
     taxYear: query.taxYear,
     effectiveDate: query.effectiveDate.toISOString(),
     jurisdictionCode,
+    engineVersion: query.engineVersion,
+    resolvedAt: query.resolvedAt.toISOString(),
+    missing,
     entries,
     ruleReferences: references,
     sourceIds: [...new Set(references.flatMap((reference) => reference.sourceIds))],

@@ -1,31 +1,42 @@
 import { type Money, max, min, multiply, subtract, zero } from '@/lib/core/money';
 
+import { FederalReason, unavailable } from '../errors/federal-errors';
 import { FederalRuleKey } from '../rule-keys';
+import { roundTax, type FederalRoundingPolicy } from '../rounding/federal-rounding';
 import {
-  FEDERAL_ROUNDING_V1,
-  roundTax,
-  type FederalRoundingPolicy,
-} from '../rounding/federal-rounding';
-import { readDetail, requireComponent, type Read, readFail, readOk } from '../rules/read-detail';
+  readDetail,
+  readRate,
+  requireComponent,
+  type Read,
+  readFail,
+  readOk,
+} from '../rules/read-detail';
 import type { ResolvedFederalRuleSet } from '../rules/resolved-rule-set';
-import type { FutaDetail } from '../rules/detail-schemas';
+import type { RateDetail, WageBaseDetail } from '../rules/detail-schemas';
 
 /**
- * FUTA (Phase 4, Track D — EMPLOYER ONLY).
+ * FUTA — spec §18. Track D, EMPLOYER ONLY.
  *
  * ===========================================================================
- * FUTA IS NEVER A PAYCHECK DEDUCTION.
+ * FUTA IS NEVER A PAYCHECK DEDUCTION (§18.1).
  *
- * It is an employer liability. It must never appear in employee tax totals, and must never
- * reduce net pay. Nothing in this module returns an employee figure, so it cannot.
+ * It must never appear in employee taxes, never reduce net pay, never show in
+ * the employee-facing breakdown. Nothing in this module returns an employee
+ * figure, so structurally it cannot.
  * ===========================================================================
  *
- * Effective rate = gross rate − credit. The credit is a stated component of the rule; a
- * missing credit is COMPONENT_NOT_STATED, never an assumed full credit and never zero.
+ * The effective rate is DERIVED at calculation time (gross − credit), never
+ * stored pre-computed, so the trace can show the subtraction and a credit
+ * change needs no rate re-entry (§18.3).
  *
- * PHASE 5 — state credit reduction. Some states reduce the standard credit, which raises the
- * effective rate. That determination is jurisdiction-specific and is deliberately out of
- * Phase 4 scope: this module applies the STANDARD credit only and discloses that it has.
+ * CREDIT REDUCTION (§18.6, D-FUTA-2) — deferred to Phase 5. The standard credit
+ * only is applied here, and the caller is told so explicitly: silently
+ * presenting a possibly understated employer cost as complete would violate the
+ * transparency principle.
+ *
+ * APPLICABILITY (§18.7) — a paycheck calculator cannot evaluate the statutory
+ * employer tests, so FUTA is conditioned on `employerSubjectToFuta` and that
+ * condition is stated in the output rather than assumed away.
  */
 
 export interface FutaComputation {
@@ -35,47 +46,74 @@ export interface FutaComputation {
   readonly credit: Money;
   readonly effectiveRate: Money;
   readonly employer: Money;
-  readonly ruleKey: string;
-}
-
-/** FUTA is capped by an annual wage base, tracked the same way as Social Security. */
-export function futaTaxableWages(
-  periodWages: Money,
-  ytdWages: Money,
-  wageBase: Money,
-): { taxable: Money; remaining: Money } {
-  const remaining = max(subtract(wageBase, ytdWages), zero());
-  return { taxable: min(remaining, periodWages), remaining };
+  readonly creditReductionEvaluated: false;
+  readonly ruleKeys: readonly string[];
 }
 
 export function calculateFuta(
   ruleSet: ResolvedFederalRuleSet,
   periodWages: Money,
   ytdWages: Money,
-  policy: FederalRoundingPolicy = FEDERAL_ROUNDING_V1,
+  employerSubjectToFuta: boolean,
+  policy: FederalRoundingPolicy,
 ): Read<FutaComputation> {
-  const found = readDetail(ruleSet, FederalRuleKey.FUTA);
-  if (!found.ok) {
-    return readFail(found.problem);
+  if (!employerSubjectToFuta) {
+    return readFail(
+      unavailable(
+        FederalReason.SCENARIO_UNSUPPORTED,
+        'The employer is not subject to FUTA, so no FUTA is computed. It is omitted with this ' +
+          'statement rather than reported as zero.',
+        FederalRuleKey.FUTA_GROSS_RATE,
+      ),
+    );
   }
 
-  const detail = found.value.detail as FutaDetail;
-  const ruleKey = found.value.ruleKey;
-
-  const grossRate = requireComponent(detail.grossRate, ruleKey, 'grossRate');
+  const grossRule = readDetail(ruleSet, FederalRuleKey.FUTA_GROSS_RATE);
+  if (!grossRule.ok) {
+    return readFail(grossRule.problem);
+  }
+  const grossDetail = grossRule.value.detail as RateDetail;
+  const grossRate = readRate(grossDetail.rate, grossDetail.unit, FederalRuleKey.FUTA_GROSS_RATE);
   if (!grossRate.ok) {
     return readFail(grossRate.problem);
   }
-  const credit = requireComponent(detail.standardCredit, ruleKey, 'standardCredit');
+
+  const creditRule = readDetail(ruleSet, FederalRuleKey.FUTA_STANDARD_CREDIT);
+  if (!creditRule.ok) {
+    return readFail(creditRule.problem);
+  }
+  const creditDetail = creditRule.value.detail as RateDetail;
+  const credit = readRate(
+    creditDetail.rate,
+    creditDetail.unit,
+    FederalRuleKey.FUTA_STANDARD_CREDIT,
+  );
   if (!credit.ok) {
     return readFail(credit.problem);
   }
-  const wageBase = requireComponent(detail.wageBase, ruleKey, 'wageBase');
+
+  const baseRule = readDetail(ruleSet, FederalRuleKey.FUTA_WAGE_BASE);
+  if (!baseRule.ok) {
+    return readFail(baseRule.problem);
+  }
+  const baseDetail = baseRule.value.detail as WageBaseDetail;
+  if (baseDetail.applicability === 'NOT_APPLICABLE') {
+    return readFail(
+      unavailable(
+        FederalReason.RULE_CONFLICT,
+        'The FUTA wage base is recorded NOT_APPLICABLE, but FUTA has a wage base; data defect',
+        FederalRuleKey.FUTA_WAGE_BASE,
+        'applicability',
+      ),
+    );
+  }
+  const wageBase = requireComponent(baseDetail.amount, FederalRuleKey.FUTA_WAGE_BASE, 'amount');
   if (!wageBase.ok) {
     return readFail(wageBase.problem);
   }
 
-  const { taxable, remaining } = futaTaxableWages(periodWages, ytdWages, wageBase.value);
+  const remaining = max(subtract(wageBase.value, ytdWages), zero());
+  const taxable = min(periodWages, remaining);
   const effectiveRate = subtract(grossRate.value, credit.value);
 
   return readOk({
@@ -85,6 +123,11 @@ export function calculateFuta(
     credit: credit.value,
     effectiveRate,
     employer: roundTax(multiply(taxable, effectiveRate), policy),
-    ruleKey,
+    creditReductionEvaluated: false,
+    ruleKeys: [
+      FederalRuleKey.FUTA_GROSS_RATE,
+      FederalRuleKey.FUTA_STANDARD_CREDIT,
+      FederalRuleKey.FUTA_WAGE_BASE,
+    ],
   });
 }

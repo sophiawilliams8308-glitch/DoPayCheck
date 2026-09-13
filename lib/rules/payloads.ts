@@ -171,11 +171,29 @@ const localTaxPayload = z.object({
   appliesToNonResidents: z.boolean().optional(),
 });
 
+/**
+ * FUTA (Phase 4 spec §18.3).
+ *
+ * The gross rate, the standard credit and the wage base are three separate
+ * authoritative values; the effective rate is DERIVED at calculation time so
+ * the trace can show the subtraction and a credit change needs no rate re-entry.
+ */
+const futaPayload = z.object({
+  grossRate: nullableDecimal,
+  standardCredit: nullableDecimal,
+  wageBase: nullableDecimal,
+  /** Per-state credit reductions. Modelled now, applied in a later phase. */
+  creditReductions: z
+    .array(z.object({ stateCode: z.string().trim().length(2), reduction: nullableDecimal }))
+    .optional(),
+});
+
 /** Payload schema per category. */
 export const RULE_PAYLOAD_SCHEMAS = {
   [RuleCategory.FEDERAL_INCOME_TAX]: federalIncomeTaxPayload,
   [RuleCategory.FEDERAL_WITHHOLDING]: federalWithholdingPayload,
   [RuleCategory.SOCIAL_SECURITY]: socialSecurityPayload,
+  [RuleCategory.FUTA]: futaPayload,
   [RuleCategory.MEDICARE]: medicarePayload,
   [RuleCategory.STATE_INCOME_TAX]: stateIncomeTaxPayload,
   [RuleCategory.STATE_WITHHOLDING]: stateWithholdingPayload,

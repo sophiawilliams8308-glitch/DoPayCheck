@@ -21,12 +21,13 @@ thresholds, wage bases or withholding tables anywhere in `lib/calculator/`, beca
 been sourced and verified yet. The engine resolves _which rule governs each component_ and
 reports honestly when it cannot produce a figure.
 
-A component backed by a usable, verified rule is currently returned as
-`UNSUPPORTED_SCENARIO` / `METHOD_NOT_IMPLEMENTED` — the methodology that consumes rule values
-arrives in Phases 4–6.
+A component with no methodology behind it is returned as `UNSUPPORTED_SCENARIO` /
+`METHOD_NOT_IMPLEMENTED`. **Federal methodology now exists** — Phase 4 supplies it, through the
+optional `federal` option described in §21 below. State and local methodology still do not.
 
-**Not in Phase 3:** federal withholding methodology (Phase 4), state engines (Phase 5),
-locality resolution and local tax (Phase 6), any UI (Phases 9–10).
+**Not in Phase 3:** federal withholding methodology (Phase 4 — see
+`docs/FEDERAL-ENGINE.md`), state engines (Phase 5), locality resolution and local tax
+(Phase 6), any UI (Phases 9–10).
 
 ---
 
@@ -416,25 +417,72 @@ const snapshot = toPersistablePayload(buildSnapshot(input, result));
 | `tests/integration/calculation-snapshot.test.ts` | Snapshot persistence and historical reproducibility          |
 
 Tax-value fixtures are **deliberately absent.** Test rules carry identifiers and structure
-only, and scenarios use non-real tax years (2095, 2099) so no fixture can be mistaken for
-authoritative data. Golden tests against verified official values arrive with Phases 4–6, once
-there are official values to test against (spec §61).
+only, and scenarios use non-real tax years (2095, 2097, 2099) so no fixture can be mistaken for
+authoritative data. Phase 4 adds synthetic federal fixtures under `tests/fixtures/federal/`,
+marked `SYNTHETIC` and unreachable from production code by guard test. The golden registry
+exists and is empty: official worked examples remain PENDING DATA (spec §61).
 
 Integration tests skip cleanly when no database is configured.
 
 ---
 
-## 20. Unresolved decisions
+## 20. Phase 4: the federal engine attaches here
 
-| Item                                                        | Status                                                            |
-| ----------------------------------------------------------- | ----------------------------------------------------------------- |
-| All federal, state and local tax values and methodology     | **PENDING DATA** — no official values recorded                    |
-| Per-tax rounding methodology                                | **PENDING DECISION** (Phases 4–6)                                 |
-| `DAILY` periods per year                                    | **PENDING DECISION** — caller must supply `periodsPerYear`        |
-| Dedicated FUTA rule category                                | **PENDING DECISION** (Phase 4)                                    |
-| YTD application (wage bases, Additional Medicare threshold) | **PENDING NEXT PHASE** (Phase 4) — `ytd` is accepted, not applied |
-| W-4 withholding methodology                                 | **PENDING NEXT PHASE** (Phase 4) — `w4` shape only                |
-| Supplemental-wage taxation (bonus, commission, tips)        | **PENDING NEXT PHASE** (Phases 4–5)                               |
-| Locality resolution from ZIP / address                      | **PENDING NEXT PHASE** (Phase 6)                                  |
-| Residence-based taxation and reciprocity                    | **PENDING NEXT PHASE** (Phases 5–6)                               |
-| Verification against a non-container PostgreSQL instance    | **PENDING VERIFICATION**                                          |
+Phase 4 did **not** fork the pipeline. `calculatePaycheck` remains the single entry point, and
+the federal engine attaches to it through one optional option:
+
+```ts
+calculatePaycheck(input, {
+  rounding: policy,
+  rules: resolvedRuleSet,
+  federal: { ruleSet: federalRuleSet, taxabilityProfiles },
+});
+```
+
+Omit `federal` and Phase 3 behaviour is unchanged, bit for bit — `result.federalEngine` is
+`null` and the federal components report as before. Supply it and:
+
+- `result.federal[]` and `result.fica[]` carry real amounts, computed by the federal engine
+- `result.employerTaxes[]` carries the employer side, never mixed into the employee arrays
+- `result.federalEngine` carries the full federal result: worksheet lines, trace, disclosures,
+  rule references and machine-readable gaps
+
+The bridge lives in `lib/calculator/federal-bridge.ts`. It translates between the two contracts
+and does no arithmetic of its own.
+
+### What changed in Phase 3 code
+
+Additive only:
+
+| File                                        | Change                                                          |
+| ------------------------------------------- | --------------------------------------------------------------- |
+| `lib/calculator/types/input.ts`             | `deductionTypeKey` on deductions; W-4 revision/exemption fields |
+| `lib/calculator/validation/input-schema.ts` | Matching Zod fields                                             |
+| `lib/calculator/types/result.ts`            | `federalEngine: FederalCalculationResult \| null`               |
+| `lib/calculator/index.ts`                   | Optional `federal` option, wired through the existing stages    |
+
+### Wage buckets, revisited
+
+§10 above describes the four independent buckets. Phase 4 tightened one thing: a bucket whose
+taxability cannot be determined is now `null` rather than a derived figure, and every tax that
+reads it reports INCOMPLETE. `deductionTypeKey` is how a deduction line names the sourced
+profile that states its treatment.
+
+---
+
+## 21. Unresolved decisions
+
+| Item                                                        | Status                                                         |
+| ----------------------------------------------------------- | -------------------------------------------------------------- |
+| All federal, state and local tax VALUES                     | **PENDING DATA** — no official values recorded                 |
+| State and local methodology                                 | **PENDING NEXT PHASE** (Phases 5–6)                            |
+| State and local per-tax rounding methodology                | **PENDING DECISION** (Phases 5–6)                              |
+| `DAILY` periods per year                                    | **PENDING DECISION** — caller must supply `periodsPerYear`     |
+| Dedicated FUTA rule category                                | **RESOLVED** (Phase 4, D-FUTA-1) — `FUTA` is its own category  |
+| YTD application (wage bases, Additional Medicare threshold) | **RESOLVED** (Phase 4) — applied, excluding the current period |
+| W-4 withholding methodology                                 | **RESOLVED** (Phase 4) — Pub. 15-T Worksheet 1A                |
+| Federal per-tax rounding methodology                        | **RESOLVED** (Phase 4) — policy is rule data, and disclosed    |
+| Supplemental-wage taxation (bonus, commission, tips)        | **RESOLVED federally** (Phase 4); state treatment Phase 5      |
+| Locality resolution from ZIP / address                      | **PENDING NEXT PHASE** (Phase 6)                               |
+| Residence-based taxation and reciprocity                    | **PENDING NEXT PHASE** (Phases 5–6)                            |
+| Verification against a non-container PostgreSQL instance    | **PENDING VERIFICATION**                                       |

@@ -5,7 +5,7 @@ import type { CalculationInput } from '@/lib/calculator/types/input';
 import type { ResolvedRuleSet } from '@/lib/calculator/types/rules';
 import { FederalRuleKey } from '@/lib/tax/federal/rule-keys';
 
-import { syntheticRuleSet } from '../fixtures/federal/synthetic-rules';
+import { SYNTHETIC_PROFILES, syntheticRuleSet } from '../fixtures/federal/synthetic-rules';
 
 /**
  * Phase 3 pipeline + Phase 4 federal engine (integration, no database).
@@ -21,7 +21,7 @@ const input: CalculationInput = {
   effectiveDate: new Date('2099-06-15T00:00:00.000Z'),
   employee: { workLocation: { stateCode: 'US-ZZ' } },
   pay: { basis: 'SALARY', payFrequency: 'BIWEEKLY', annualSalary: '2600' },
-  w4: { filingStatus: 'SYNTHETIC_SINGLE' },
+  w4: { filingStatus: 'SINGLE_OR_MFS' },
 };
 
 describe('without a federal rule set', () => {
@@ -62,8 +62,9 @@ describe('with a federal rule set', () => {
     const employeeCodes = [...result.federal, ...result.fica].map((c) => c.code);
     expect(employeeCodes.filter((code) => code.includes('EMPLOYER'))).toEqual([]);
 
-    // The federal engine's own employee total excludes every employer figure.
-    expect(result.federalEngine?.employer?.total.amount).toBe('12.6');
+    // The employer total is the employer side ONLY: synthetic SS 10% + Medicare 2% of 100,
+    // plus FUTA at (10% − 4%) of 100. It shares no figure with the employee components.
+    expect(result.federalEngine?.employer?.totalEmployerFederalTaxes.amount).toBe('18');
   });
 
   it('still withholds the paycheck total while STATE and LOCAL remain unresolved', () => {
@@ -88,7 +89,7 @@ describe('with a federal rule set', () => {
   it('reports a missing federal rule as an undetermined component, never zero', () => {
     const result = calculatePaycheck(input, {
       ...options,
-      federal: { ruleSet: syntheticRuleSet({ omit: [FederalRuleKey.FICA_MEDICARE] }) },
+      federal: { ruleSet: syntheticRuleSet({ omit: [FederalRuleKey.MEDICARE_EMPLOYEE_RATE] }) },
     });
     expect(result.fica[1]?.amount).toBeNull();
     expect(result.fica[1]?.amount).not.toBe('0');
@@ -110,7 +111,8 @@ describe('with a federal rule set', () => {
         ...input,
         preTaxDeductions: [
           {
-            id: '401k',
+            id: 'deferral',
+            deductionTypeKey: 'SYNTHETIC_DEFERRAL',
             basis: 'FIXED_AMOUNT',
             amount: '10',
             // Reduces income tax wages only — the classic FICA trap.
@@ -118,7 +120,7 @@ describe('with a federal rule set', () => {
           },
         ],
       },
-      options,
+      { ...options, federal: { ...options.federal, taxabilityProfiles: SYNTHETIC_PROFILES } },
     );
 
     expect(withDeduction.taxableWages.federalIncomeTaxWages).toBe('90');
@@ -126,5 +128,50 @@ describe('with a federal rule set', () => {
     // FICA is unchanged by the deduction; income tax withholding drops.
     expect(withDeduction.fica[0]?.amount).toBe('10');
     expect(Number(withDeduction.federal[0]?.amount)).toBeLessThan(8.85);
+  });
+
+  it('never zeroes a wage bucket whose taxability is unknown', () => {
+    // The dangerous failure mode: an unresolved profile silently zeroing the
+    // bucket, so FICA reports a confident 0 instead of "undetermined".
+    const unknownType = calculatePaycheck(
+      {
+        ...input,
+        preTaxDeductions: [{ id: 'mystery', basis: 'FIXED_AMOUNT', amount: '10', taxability: {} }],
+      },
+      options,
+    );
+
+    expect(unknownType.fica[0]?.amount).toBeNull();
+    expect(unknownType.fica[0]?.amount).not.toBe('0');
+    expect(unknownType.fica[0]?.status).toBe('UNSUPPORTED_SCENARIO');
+    expect(unknownType.federalEngine?.buckets.socialSecurityWages).toBeNull();
+    expect(unknownType.netPay).toBeNull();
+  });
+
+  it('blocks only the buckets a NOT_STATED treatment affects', () => {
+    // §12.2 independence: the profile is silent on Social Security alone, so
+    // Medicare and income tax must still produce their amounts.
+    const partial = calculatePaycheck(
+      {
+        ...input,
+        preTaxDeductions: [
+          {
+            id: 'unstated',
+            deductionTypeKey: 'SYNTHETIC_UNSTATED',
+            basis: 'FIXED_AMOUNT',
+            amount: '10',
+            taxability: {},
+          },
+        ],
+      },
+      { ...options, federal: { ...options.federal, taxabilityProfiles: SYNTHETIC_PROFILES } },
+    );
+
+    expect(partial.federalEngine?.buckets.socialSecurityWages).toBeNull();
+    expect(partial.fica[0]?.amount).toBeNull();
+    // Medicare's treatment IS stated, so it is unaffected: 2% of (100 − 10).
+    expect(partial.federalEngine?.buckets.medicareWages).toBe('90');
+    expect(partial.fica[1]?.amount).toBe('1.8');
+    expect(partial.federal[0]?.amount).not.toBeNull();
   });
 });

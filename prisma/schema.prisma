@@ -59,6 +59,12 @@ enum RuleCategory {
   FEDERAL_WITHHOLDING
   SOCIAL_SECURITY
   MEDICARE
+  /// Phase 4 (spec D-FUTA-1). FUTA's structure — a gross rate reduced by a
+  /// credit, over its own wage base — has no analogue in FIT (schedules) or
+  /// FICA (symmetric rate + base), and it is the only federal tax whose
+  /// effective rate depends on the state of employment. Filing it under
+  /// SOCIAL_SECURITY would bury it for the administrators who maintain it.
+  FUTA
   STATE_INCOME_TAX
   STATE_WITHHOLDING
   DISABILITY_SDI

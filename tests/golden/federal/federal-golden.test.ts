@@ -36,19 +36,23 @@ describe('federal golden cases', () => {
         ).toBe(testCase.engineVersion);
 
         const checks: [string | undefined, string | null, string][] = [
-          [testCase.expected.withholdingTotal, result.withholding.total.amount, 'withholding'],
+          [
+            testCase.expected.withholdingTotal,
+            result.employee.federalIncomeTaxWithheld.amount,
+            'withholding',
+          ],
           [
             testCase.expected.socialSecurityEmployee,
-            result.fica.socialSecurityEmployee.amount,
+            result.employee.socialSecurityEmployee.amount,
             'social security',
           ],
-          [testCase.expected.medicareEmployee, result.fica.medicareEmployee.amount, 'medicare'],
+          [testCase.expected.medicareEmployee, result.employee.medicareEmployee.amount, 'medicare'],
           [
             testCase.expected.additionalMedicareEmployee,
-            result.fica.additionalMedicareEmployee.amount,
+            result.employee.additionalMedicareEmployee.amount,
             'additional medicare',
           ],
-          [testCase.expected.futaEmployer, result.employer?.futa.amount ?? null, 'futa'],
+          [testCase.expected.futaEmployer, result.employer?.futaEmployer.amount ?? null, 'futa'],
         ];
 
         for (const [expected, actual, label] of checks) {

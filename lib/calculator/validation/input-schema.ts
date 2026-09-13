@@ -51,6 +51,7 @@ const deductionSchema = z
     percent: nonNegativeDecimal.optional(),
     enabled: z.boolean().optional(),
     ordinal: z.number().int().min(0).optional(),
+    deductionTypeKey: z.string().trim().min(1).optional(),
     taxability: deductionTaxabilitySchema,
   })
   .superRefine((value, ctx) => {

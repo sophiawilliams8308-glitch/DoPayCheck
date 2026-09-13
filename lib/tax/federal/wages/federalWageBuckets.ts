@@ -1,87 +1,205 @@
-import { type Money, add, max, subtract, sum, toStorageString, zero } from '@/lib/core/money';
+import { type Money, max, money, subtract, sum, toStorageString, zero } from '@/lib/core/money';
 
-import type { DeductionTaxability } from '@/lib/calculator/types/input';
-
-import type { FederalPeriodWages, FederalWageBuckets } from '../types';
+import { FederalReason, type FederalUnavailable, unavailable } from '../errors/federal-errors';
+import type { FederalWageBuckets } from '../types';
 
 /**
- * Federal taxable wage buckets (Phase 4).
+ * Federal taxable wage buckets — spec §12, §19.
  *
  * ===========================================================================
- * EACH BUCKET IS DERIVED INDEPENDENTLY.
+ * TAXABILITY IS DATA, NOT CODE (§12.4).
  *
- * A 401(k) contribution reduces federal income tax wages but NOT Social Security or Medicare
- * wages. One "taxable wages" figure applied to every tax silently produces the wrong FICA.
- * This mirrors the Phase 3 bucket architecture rather than replacing it: Phase 3 owns the
- * seven-bucket model, and Phase 4 reads the four federal ones.
+ * "Pre-tax" is never a single global property. A traditional 401(k) deferral
+ * reduces federal income tax wages but NOT Social Security or Medicare wages;
+ * a section 125 health premium reduces all three; treatments differ again for
+ * FUTA. Each deduction type therefore carries a versioned, sourced profile, and
+ * no deduction-type literal may appear in this file.
  * ===========================================================================
  *
- * OBBBA QUALIFIED TIPS AND OVERTIME — NO BUCKET REDUCTION.
+ * THE FLAGS ARE TRI-STATE (§12.2). `NOT_STATED` is never coerced to `FALSE`: a
+ * deduction whose profile does not state a bucket the calculation needs makes
+ * the federal result INCOMPLETE, naming the deduction and the bucket. Coercing
+ * it would silently produce the wrong FICA with no visible symptom.
  *
- * Their relief is delivered through the employee's Step 4(b) deduction on the W-4, which
- * affects INCOME TAX withholding only. They remain fully subject to Social Security and
- * Medicare. Reducing a FICA bucket for them would understate FICA and misstate the employee's
- * earnings record, so this module deliberately offers no such reduction.
+ * OBBBA QUALIFIED TIPS AND OVERTIME reduce NO bucket (§7.9, §19.5). Their
+ * relief reaches payroll solely through the employee's W-4 Step 4(b) amount,
+ * which affects income-tax withholding only. They remain fully subject to both
+ * shares of Social Security and Medicare.
  */
 
-/** A pre-tax deduction and the buckets it reduces, as Phase 3 models it. */
-export interface FederalDeduction {
+export const Taxability = {
+  TRUE: 'TRUE',
+  FALSE: 'FALSE',
+  /** The source does not state a treatment. Never the same as FALSE. */
+  NOT_STATED: 'NOT_STATED',
+} as const;
+
+export type Taxability = (typeof Taxability)[keyof typeof Taxability];
+
+export const FEDERAL_BUCKETS = [
+  'federalIncomeTaxWages',
+  'socialSecurityWages',
+  'medicareWages',
+  'futaWages',
+] as const;
+
+export type FederalBucket = (typeof FEDERAL_BUCKETS)[number];
+
+/** A versioned, sourced taxability profile for one deduction type (§12.2). */
+export interface DeductionTaxabilityProfile {
+  readonly deductionTypeKey: string;
+  readonly reducesFederalIncomeTaxWages: Taxability;
+  readonly reducesSocialSecurityWages: Taxability;
+  readonly reducesMedicareWages: Taxability;
+  readonly reducesFutaWages: Taxability;
+  /** Provenance for the trace and the snapshot. */
+  readonly ruleId?: string;
+  readonly sourceIds?: readonly string[];
+}
+
+/** One pre-tax deduction line from the Phase 3 pipeline. */
+export interface FederalDeductionLine {
   readonly id: string;
+  readonly deductionTypeKey: string;
   readonly amount: Money;
-  readonly taxability: DeductionTaxability;
 }
 
-type FederalBucket = 'federalIncomeTax' | 'socialSecurity' | 'medicare' | 'futa';
-
-/** Absent means "does not reduce". Never inferred as true. */
-function reduces(taxability: DeductionTaxability, bucket: FederalBucket): boolean {
-  return taxability[bucket] === true;
+function flagFor(profile: DeductionTaxabilityProfile, bucket: FederalBucket): Taxability {
+  switch (bucket) {
+    case 'federalIncomeTaxWages':
+      return profile.reducesFederalIncomeTaxWages;
+    case 'socialSecurityWages':
+      return profile.reducesSocialSecurityWages;
+    case 'medicareWages':
+      return profile.reducesMedicareWages;
+    case 'futaWages':
+      return profile.reducesFutaWages;
+  }
 }
 
-function bucketWages(
-  grossFor: Money,
-  deductions: readonly FederalDeduction[],
-  bucket: FederalBucket,
-): Money {
-  const applied = deductions.filter((item) => reduces(item.taxability, bucket));
-  const total = sum(applied.map((item) => item.amount));
-  // Arithmetic floor, not a tax rule: deductions above gross cannot make wages negative.
-  return max(subtract(grossFor, total), zero());
+export interface BucketDerivation {
+  readonly bucket: FederalBucket;
+  readonly grossWages: string;
+  readonly applied: readonly { readonly id: string; readonly amount: string }[];
+  /** `null` when the bucket could not be determined. Never zero as a stand-in. */
+  readonly taxableWages: string | null;
+}
+
+export interface WageBucketOutcome {
+  /** A bucket is `null` exactly when `problemsByBucket` names a reason for it. */
+  readonly buckets: FederalWageBuckets;
+  readonly derivations: readonly BucketDerivation[];
+  /** Non-empty when a needed treatment is NOT_STATED or a type is unknown. */
+  readonly problems: readonly FederalUnavailable[];
+  /**
+   * Why a bucket could not be derived, per bucket.
+   *
+   * PER BUCKET, not global: an unknown treatment for Medicare wages must not
+   * block income-tax withholding, and vice versa. Independence is the whole
+   * point of §12 — one unusable profile fails only the taxes that need it.
+   */
+  readonly problemsByBucket: Readonly<Record<FederalBucket, FederalUnavailable | null>>;
 }
 
 /**
- * Derives the four federal buckets for one pay period.
+ * Derives the four federal buckets, each independently from its own flags.
  *
- * Tips and qualified overtime are added to EVERY federal wage base, including FICA — see the
- * OBBBA note above.
+ * @param grossFederalWages Wages subject to federal tax before pre-tax deductions —
+ *                          including tips and qualified overtime in full.
  */
 export function deriveFederalWageBuckets(
-  wages: FederalPeriodWages,
-  deductions: readonly FederalDeduction[],
-  toMoney: (value: string) => Money,
-): FederalWageBuckets {
-  const regular = toMoney(wages.regular);
-  const supplemental = toMoney(wages.supplemental);
-  const tips = toMoney(wages.tips);
-  const qualifiedOvertime = toMoney(wages.qualifiedOvertime);
+  grossFederalWages: Money,
+  deductions: readonly FederalDeductionLine[],
+  profiles: Readonly<Record<string, DeductionTaxabilityProfile>>,
+): WageBucketOutcome {
+  const problems: FederalUnavailable[] = [];
+  const derivations: BucketDerivation[] = [];
+  const values: Record<FederalBucket, string | null> = {
+    federalIncomeTaxWages: null,
+    socialSecurityWages: null,
+    medicareWages: null,
+    futaWages: null,
+  };
+  const problemsByBucket: Record<FederalBucket, FederalUnavailable | null> = {
+    federalIncomeTaxWages: null,
+    socialSecurityWages: null,
+    medicareWages: null,
+    futaWages: null,
+  };
 
-  const grossFederalWages = add(add(regular, supplemental), add(tips, qualifiedOvertime));
+  for (const bucket of FEDERAL_BUCKETS) {
+    const applied: { id: string; amount: string }[] = [];
+    const amounts: Money[] = [];
+
+    for (const deduction of deductions) {
+      const profile = profiles[deduction.deductionTypeKey];
+
+      if (profile === undefined) {
+        const problem = unavailable(
+          FederalReason.SCENARIO_UNSUPPORTED,
+          `No taxability profile for deduction type ${deduction.deductionTypeKey}; its federal ` +
+            'treatment is unknown and is not guessed',
+          undefined,
+          deduction.deductionTypeKey,
+        );
+        problems.push(problem);
+        problemsByBucket[bucket] ??= problem;
+        continue;
+      }
+
+      const flag = flagFor(profile, bucket);
+
+      if (flag === Taxability.NOT_STATED) {
+        const problem = unavailable(
+          FederalReason.TAXABILITY_NOT_STATED,
+          `The taxability profile for ${deduction.deductionTypeKey} does not state whether it ` +
+            `reduces ${bucket}; NOT_STATED is never treated as "does not reduce"`,
+          profile.ruleId,
+          `${deduction.deductionTypeKey}.${bucket}`,
+        );
+        problems.push(problem);
+        problemsByBucket[bucket] ??= problem;
+        continue;
+      }
+
+      if (flag === Taxability.TRUE) {
+        applied.push({ id: deduction.id, amount: toStorageString(deduction.amount) });
+        amounts.push(deduction.amount);
+      }
+    }
+
+    const total = amounts.length === 0 ? zero() : sum(amounts);
+    // Arithmetic floor, not a tax rule: deductions above gross cannot make
+    // taxable wages negative.
+    const taxable = max(subtract(grossFederalWages, total), zero());
+    // A bucket with an unresolved deduction stays null. Publishing the partial
+    // figure would be worse than publishing nothing: it looks authoritative.
+    values[bucket] = problemsByBucket[bucket] === null ? toStorageString(taxable) : null;
+
+    derivations.push({
+      bucket,
+      grossWages: toStorageString(grossFederalWages),
+      applied,
+      taxableWages: values[bucket],
+    });
+  }
 
   return {
-    federalIncomeTaxWages: toStorageString(
-      bucketWages(grossFederalWages, deductions, 'federalIncomeTax'),
-    ),
-    socialSecurityWages: toStorageString(
-      bucketWages(grossFederalWages, deductions, 'socialSecurity'),
-    ),
-    medicareWages: toStorageString(bucketWages(grossFederalWages, deductions, 'medicare')),
-    futaWages: toStorageString(bucketWages(grossFederalWages, deductions, 'futa')),
+    buckets: {
+      federalIncomeTaxWages: values.federalIncomeTaxWages,
+      socialSecurityWages: values.socialSecurityWages,
+      medicareWages: values.medicareWages,
+      futaWages: values.futaWages,
+    },
+    derivations,
+    problems,
+    problemsByBucket,
   };
 }
 
 /** Zero buckets, for scenarios with no federal wages at all. */
 export function emptyFederalBuckets(): FederalWageBuckets {
-  const z = toStorageString(zero());
+  const z = toStorageString(money('0'));
   return {
     federalIncomeTaxWages: z,
     socialSecurityWages: z,

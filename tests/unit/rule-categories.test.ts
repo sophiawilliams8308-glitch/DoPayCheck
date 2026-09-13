@@ -11,8 +11,11 @@ import {
 /** Rule category registry tests (spec §20). */
 
 describe('category coverage', () => {
-  it('defines all 13 categories required by the specification', () => {
-    expect(ALL_RULE_CATEGORIES).toHaveLength(13);
+  it('defines all 14 categories required by the specification', () => {
+    // 13 from the Master Specification §20, plus FUTA — the Phase 4 spec gives
+    // federal unemployment tax its own category (D-FUTA-1) rather than folding
+    // it into an existing one.
+    expect(ALL_RULE_CATEGORIES).toHaveLength(14);
     for (const category of Object.values(RuleCategory)) {
       expect(RULE_CATEGORY_DEFINITIONS[category]).toBeDefined();
     }
@@ -24,6 +27,7 @@ describe('category coverage', () => {
       'FEDERAL_WITHHOLDING',
       'SOCIAL_SECURITY',
       'MEDICARE',
+      'FUTA',
       'STATE_INCOME_TAX',
       'STATE_WITHHOLDING',
       'DISABILITY_SDI',

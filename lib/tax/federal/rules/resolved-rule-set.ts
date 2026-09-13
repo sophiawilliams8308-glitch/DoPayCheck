@@ -1,6 +1,6 @@
 import type { RuleReference } from '@/lib/calculator/types/rules';
 
-import type { FederalUnavailable } from '../errors/federal-errors';
+import type { FederalUnavailable, MissingRuleIssue } from '../errors/federal-errors';
 import type { FederalRuleKey } from '../rule-keys';
 
 /**
@@ -35,6 +35,12 @@ export interface ResolvedFederalRuleSet {
   /** ISO instant the rules were resolved FOR — not when resolution ran. */
   readonly effectiveDate: string;
   readonly jurisdictionCode: string;
+  /** Engine build that resolved this set (§2.4). */
+  readonly engineVersion: string;
+  /** When resolution ran. METADATA ONLY — never used in arithmetic (§2.4). */
+  readonly resolvedAt: string;
+  /** Gaps an operator can act on, machine-readable (§28.2). */
+  readonly missing: readonly MissingRuleIssue[];
   /** Every key the scenario required, resolved or explained. */
   readonly entries: Readonly<Partial<Record<FederalRuleKey, FederalRuleEntry>>>;
   /** Deduplicated provenance across every resolved rule. */
@@ -67,5 +73,6 @@ export function freezeRuleSet(ruleSet: ResolvedFederalRuleSet): ResolvedFederalR
   }
   Object.freeze(ruleSet.ruleReferences);
   Object.freeze(ruleSet.sourceIds);
+  Object.freeze(ruleSet.missing);
   return Object.freeze(ruleSet);
 }

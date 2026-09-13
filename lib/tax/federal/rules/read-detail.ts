@@ -1,4 +1,4 @@
-import { type Money, money } from '@/lib/core/money';
+import { type Money, RoundingMode, divide, money } from '@/lib/core/money';
 
 import { FederalReason, type FederalUnavailable, unavailable } from '../errors/federal-errors';
 import type { FederalRuleKey } from '../rule-keys';
@@ -6,16 +6,11 @@ import { federalRule, type ResolvedFederalRuleSet } from './resolved-rule-set';
 import { validateFederalDetail, type FederalDetailSchemas } from './detail-schemas';
 
 /**
- * Safe readers for resolved rule detail (Phase 4).
+ * Safe readers for resolved rule detail — the ONLY way a tax value enters the engine.
  *
- * ===========================================================================
- * THE ONLY WAY A TAX VALUE ENTERS THE ENGINE.
- *
- * Every read returns either a value or an explained absence. There is no overload that
- * returns a default, because a default is exactly the fabricated number the specification
- * forbids: `null` in a rule detail means the official source does not state the value, and
- * that is not zero.
- * ===========================================================================
+ * Every read returns a value or an explained absence. There is deliberately no
+ * overload that returns a default, because a default is exactly the fabricated
+ * number the specification forbids (§28.2).
  */
 
 export type Read<T> =
@@ -31,25 +26,40 @@ export function readFail<T>(problem: FederalUnavailable): Read<T> {
 }
 
 /**
- * Fetches a rule's detail, checking availability, verification and schema in that order.
+ * Verification statuses the engine may compute from.
  *
- * Verification is checked BEFORE the values are read: an unverified rule must never produce a
- * figure, however complete its data looks.
+ * `NOT_APPLICABLE` is usable because it is a positive, source-backed statement
+ * that the concept does not apply (§14.3) — the Medicare wage base being the
+ * canonical case. `PENDING`, `NOT_STATED`, `CONFLICT` and `PARTIALLY_VERIFIED`
+ * are not usable.
  */
-export function readDetail<K extends keyof FederalDetailSchemas>(
+const USABLE_VERIFICATION = new Set(['VERIFIED', 'NOT_APPLICABLE']);
+
+export interface ResolvedDetail<K extends keyof FederalDetailSchemas> {
+  readonly detail: unknown;
+  readonly ruleKey: K;
+  readonly verificationStatus: string;
+}
+
+/**
+ * Fetches a rule's detail, checking availability, verification and schema — in
+ * that order. Verification is checked BEFORE values are read: an unverified
+ * rule must never produce a figure, however complete its data looks.
+ */
+export function readDetail<K extends keyof FederalDetailSchemas & FederalRuleKey>(
   ruleSet: ResolvedFederalRuleSet,
-  key: K & FederalRuleKey,
-): Read<{ detail: unknown; ruleKey: string }> {
+  key: K,
+): Read<ResolvedDetail<K>> {
   const entry = federalRule(ruleSet, key);
   if (!entry.available) {
     return readFail(entry.problem);
   }
 
-  if (entry.rule.verificationStatus !== 'VERIFIED') {
+  if (!USABLE_VERIFICATION.has(entry.rule.verificationStatus)) {
     return readFail(
       unavailable(
         FederalReason.RULE_UNVERIFIED,
-        `Rule ${key} is ${entry.rule.verificationStatus}; an unverified rule is never treated as authoritative`,
+        `Rule ${key} is ${entry.rule.verificationStatus}; only VERIFIED or NOT_APPLICABLE data may be used`,
         key,
       ),
     );
@@ -67,14 +77,18 @@ export function readDetail<K extends keyof FederalDetailSchemas>(
     );
   }
 
-  return readOk({ detail: entry.rule.detail, ruleKey: key });
+  return readOk({
+    detail: entry.rule.detail,
+    ruleKey: key,
+    verificationStatus: entry.rule.verificationStatus,
+  });
 }
 
 /**
  * Converts a nullable decimal component into Money.
  *
- * `null` becomes COMPONENT_NOT_STATED, naming the exact component so an operator can go
- * straight to the field that needs sourcing.
+ * `null` becomes COMPONENT_NOT_STATED naming the exact component, so an
+ * operator goes straight to the field that needs sourcing.
  */
 export function requireComponent(
   value: string | null | undefined,
@@ -92,6 +106,30 @@ export function requireComponent(
     );
   }
   return readOk(money(value));
+}
+
+/**
+ * THE ONE PLACE A RATE UNIT IS CONVERTED (§6.4).
+ *
+ * Always returns a DECIMAL FRACTION. A percent/fraction mix-up is a 100x error,
+ * so the unit is read from the data and converted here exactly once, rather
+ * than being assumed at each call site.
+ */
+export function readRate(
+  rate: string | null,
+  unit: 'PERCENT' | 'DECIMAL_FRACTION',
+  ruleKey: string,
+  component = 'rate',
+): Read<Money> {
+  const raw = requireComponent(rate, ruleKey, component);
+  if (!raw.ok) {
+    return raw;
+  }
+  if (unit === 'DECIMAL_FRACTION') {
+    return readOk(raw.value);
+  }
+  // Exact division; 18 places is far beyond any published rate's precision.
+  return readOk(divide(raw.value, money('100'), 18, RoundingMode.HALF_UP));
 }
 
 /** Finds a per-filing-status amount, or explains its absence. */

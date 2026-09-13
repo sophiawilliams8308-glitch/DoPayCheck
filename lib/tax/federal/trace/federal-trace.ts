@@ -11,21 +11,24 @@ import type { RuleReference } from '@/lib/calculator/types/rules';
  * from prose written alongside the code that could drift from the arithmetic.
  */
 
+/** The 15 required trace stages — spec §27.1, in worksheet order. */
 export const FederalTraceStage = {
-  RULE_RESOLUTION: 'RULE_RESOLUTION',
   WAGE_BUCKETS: 'WAGE_BUCKETS',
+  TAX_YEAR_RESOLUTION: 'TAX_YEAR_RESOLUTION',
+  RULE_RESOLUTION: 'RULE_RESOLUTION',
+  PAY_FREQUENCY: 'PAY_FREQUENCY',
   W4_NORMALIZATION: 'W4_NORMALIZATION',
   WORKSHEET_1A: 'WORKSHEET_1A',
+  SCHEDULE_ROW: 'SCHEDULE_ROW',
   SUPPLEMENTAL: 'SUPPLEMENTAL',
   NRA_ADJUSTMENT: 'NRA_ADJUSTMENT',
-  WITHHOLDING_TOTAL: 'WITHHOLDING_TOTAL',
   SOCIAL_SECURITY: 'SOCIAL_SECURITY',
   MEDICARE: 'MEDICARE',
   ADDITIONAL_MEDICARE: 'ADDITIONAL_MEDICARE',
-  EMPLOYER_TAXES: 'EMPLOYER_TAXES',
   FUTA: 'FUTA',
-  ANNUAL_ESTIMATE: 'ANNUAL_ESTIMATE',
+  EMPLOYER_TAXES: 'EMPLOYER_TAXES',
   ROUNDING: 'ROUNDING',
+  ANNUAL_ESTIMATE: 'ANNUAL_ESTIMATE',
   DISCLOSURES: 'DISCLOSURES',
 } as const;
 
@@ -37,6 +40,8 @@ export type TraceValues = Readonly<Record<string, string | number | boolean | nu
 export interface FederalTraceEntry {
   readonly stage: FederalTraceStage;
   readonly sequence: number;
+  /** Plain-language label for the user-facing projection (§27.2). */
+  readonly label: string;
   readonly description: string;
   readonly inputs: TraceValues;
   readonly outputs: TraceValues;
@@ -52,12 +57,50 @@ export interface FederalTraceEntry {
 export interface FederalTraceEntryInput {
   readonly stage: FederalTraceStage;
   readonly description: string;
+  readonly label?: string;
   readonly inputs: TraceValues;
   readonly outputs: TraceValues;
   readonly rules?: readonly RuleReference[];
   readonly status?: CalculationStatus;
   readonly rounding?: string;
   readonly note?: string;
+}
+
+/** Plain-language stage labels for the user-facing projection (§27.4). */
+const STAGE_LABELS: Record<FederalTraceStage, string> = {
+  WAGE_BUCKETS: 'What part of your pay is taxed',
+  TAX_YEAR_RESOLUTION: 'Which tax year applies',
+  RULE_RESOLUTION: 'Which official rules were used',
+  PAY_FREQUENCY: 'How often you are paid',
+  W4_NORMALIZATION: 'What your W-4 says',
+  WORKSHEET_1A: 'How your federal income tax withholding was worked out',
+  SCHEDULE_ROW: 'Which withholding rate band you fall in',
+  SUPPLEMENTAL: 'Withholding on bonuses and other supplemental pay',
+  NRA_ADJUSTMENT: 'Nonresident alien adjustment',
+  SOCIAL_SECURITY: 'Social Security',
+  MEDICARE: 'Medicare',
+  ADDITIONAL_MEDICARE: 'Additional Medicare',
+  FUTA: 'Federal unemployment tax (paid by your employer)',
+  EMPLOYER_TAXES: 'What your employer pays',
+  ROUNDING: 'Rounding',
+  ANNUAL_ESTIMATE: 'Estimated tax for the year',
+  DISCLOSURES: 'Assumptions and limits',
+};
+
+/**
+ * User-facing projection (§27.4): plain language, no internal identifiers.
+ *
+ * The same trace object serves both audiences; the user projection must not
+ * leak rule IDs or source IDs.
+ */
+export function toUserTrace(
+  entries: readonly FederalTraceEntry[],
+): readonly { stage: string; label: string; outputs: TraceValues }[] {
+  return entries.map((entry) => ({
+    stage: entry.stage,
+    label: entry.label,
+    outputs: entry.outputs,
+  }));
 }
 
 export function traceMoney(value: Money): string {
@@ -73,6 +116,7 @@ export class FederalTraceBuilder {
     this.entries.push({
       stage: entry.stage,
       sequence: this.entries.length,
+      label: entry.label ?? STAGE_LABELS[entry.stage],
       description: entry.description,
       inputs: entry.inputs,
       outputs: entry.outputs,

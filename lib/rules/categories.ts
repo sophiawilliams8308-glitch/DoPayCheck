@@ -49,6 +49,16 @@ export const RULE_CATEGORY_DEFINITIONS: Readonly<Record<RuleCategory, RuleCatego
     jurisdictionTypes: FEDERAL_ONLY,
     employerSide: false,
   },
+  [RuleCategory.FUTA]: {
+    category: RuleCategory.FUTA,
+    label: 'FUTA',
+    description:
+      'Federal unemployment tax: a gross rate reduced by a credit, over its own wage base. ' +
+      'Employer-only, and the one federal tax whose effective rate depends on the state of ' +
+      'employment (Phase 4 specification, FUTA section).',
+    jurisdictionTypes: FEDERAL_ONLY,
+    employerSide: true,
+  },
   [RuleCategory.SOCIAL_SECURITY]: {
     category: RuleCategory.SOCIAL_SECURITY,
     label: 'Social Security',

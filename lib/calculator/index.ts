@@ -285,12 +285,10 @@ export function calculatePaycheck(
         const regular = toStorageString(gross.total.minus(sum([gross.bonus, gross.commission])));
         const outcome = runFederalEngine(
           input,
-          wages,
-          periods.periods,
           regular,
           supplemental,
-          options.federal,
           preTaxResult.items,
+          options.federal,
         );
         federalResult = outcome.federal;
         federalOverride = outcome.federalComponents;

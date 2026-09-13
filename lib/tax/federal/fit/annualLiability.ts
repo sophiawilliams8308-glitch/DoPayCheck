@@ -1,43 +1,76 @@
-import { type Money, add, compare, max, money, multiply, subtract, zero } from '@/lib/core/money';
+import {
+  type Money,
+  add,
+  compare,
+  max,
+  money,
+  multiply,
+  subtract,
+  sum,
+  zero,
+} from '@/lib/core/money';
 
 import { FederalReason, unavailable } from '../errors/federal-errors';
 import { FederalRuleKey } from '../rule-keys';
 import { roundTax, type FederalRoundingPolicy } from '../rounding/federal-rounding';
 import {
   readDetail,
+  readRate,
+  requireComponent,
   requireForFilingStatus,
   type Read,
   readFail,
   readOk,
-  requireComponent,
 } from '../rules/read-detail';
 import type { ResolvedFederalRuleSet } from '../rules/resolved-rule-set';
 import type {
-  AnnualRateScheduleDetail,
-  AnnualStandardDeductionDetail,
+  AmountByFilingStatusDetail,
+  BracketTableDetail,
+  ScalarAmountDetail,
 } from '../rules/detail-schemas';
 
 /**
- * Annual federal income tax liability (Phase 4, Track A).
+ * Annual federal income tax liability — spec §4. TRACK A, DISPLAY ONLY.
  *
  * ===========================================================================
- * DISPLAY ONLY. THIS IS NEVER A WITHHOLDING AMOUNT.
+ * THIS IS NEVER A WITHHOLDING AMOUNT.
  *
- * Track A answers "roughly what will I owe for the year?". Track B answers "what must my
- * employer withhold from this cheque?". They use different published data for different
- * purposes, and the whole point of separating them is that this number can never leak into a
- * payslip.
+ * Track A answers "roughly what will I owe for the year?". Track B answers
+ * "what must my employer withhold from this cheque?". Different published data,
+ * different purpose — and the whole point of the separation is that this number
+ * can never reach a payslip (§4.1).
  *
- * It reads only FED.ANNUAL.* keys. It cannot reach FED.FIT.* data, and if annual data is
- * missing it returns an incomplete result rather than borrowing Track B's tables.
+ * It reads only FED.ANNUAL.* keys. It cannot reach FED.FIT.* data, and if
+ * annual data is missing it returns NOT_AVAILABLE rather than borrowing Track
+ * B's tables. Track A is never allowed to fail the paycheck (§4.2).
  * ===========================================================================
+ *
+ * A wages-only projection: it ignores credits, other income, itemized
+ * deductions, other household income, QBI and the OBBBA deductions. Those
+ * limitations are produced here so the frontend cannot overstate the figure.
  */
 
+export const TRACK_A_LIMITATIONS: readonly string[] = [
+  'Projects from wages only — other income is not included.',
+  'Ignores tax credits.',
+  'Ignores itemized deductions and the OBBBA qualified tips and overtime deductions.',
+  'Ignores other household income and any spouse’s earnings.',
+  'Ignores qualified business income.',
+];
+
 export interface AnnualLiabilityResult {
-  readonly displayOnly: true;
+  readonly isEstimate: true;
   readonly taxableIncome: Money;
   readonly liability: Money;
+  readonly limitations: readonly string[];
   readonly ruleKeys: readonly string[];
+}
+
+/** Track A is unavailable — distinct from a failure, and never fatal (§4.2). */
+export interface AnnualLiabilityUnavailable {
+  readonly isEstimate: true;
+  readonly available: false;
+  readonly reason: string;
 }
 
 export function calculateAnnualLiability(
@@ -50,77 +83,116 @@ export function calculateAnnualLiability(
   if (!deductionRule.ok) {
     return readFail(deductionRule.problem);
   }
-  const deductionDetail = deductionRule.value.detail as AnnualStandardDeductionDetail;
+  const deductionDetail = deductionRule.value.detail as AmountByFilingStatusDetail;
 
+  // §4.3 — a filing status with no published thresholds returns unavailable.
+  // Borrowing the Single table for Head of Household would be invention.
   const standardDeduction = requireForFilingStatus(
     deductionDetail.amounts,
     filingStatus,
-    deductionRule.value.ruleKey,
+    FederalRuleKey.ANNUAL_STANDARD_DEDUCTION,
     'amounts',
   );
   if (!standardDeduction.ok) {
     return readFail(standardDeduction.problem);
   }
 
-  const scheduleRule = readDetail(ruleSet, FederalRuleKey.ANNUAL_RATE_SCHEDULE);
-  if (!scheduleRule.ok) {
-    return readFail(scheduleRule.problem);
+  const exemptionRule = readDetail(ruleSet, FederalRuleKey.ANNUAL_PERSONAL_EXEMPTION);
+  if (!exemptionRule.ok) {
+    return readFail(exemptionRule.problem);
   }
-  const scheduleDetail = scheduleRule.value.detail as AnnualRateScheduleDetail;
-  const scheduleKey = scheduleRule.value.ruleKey;
+  const exemptionDetail = exemptionRule.value.detail as ScalarAmountDetail;
+  const personalExemption = requireComponent(
+    exemptionDetail.amount,
+    FederalRuleKey.ANNUAL_PERSONAL_EXEMPTION,
+    'amount',
+  );
+  if (!personalExemption.ok) {
+    return readFail(personalExemption.problem);
+  }
 
-  const bracketSet = scheduleDetail.bracketSets.find(
+  const bracketRule = readDetail(ruleSet, FederalRuleKey.ANNUAL_RATE_BRACKETS);
+  if (!bracketRule.ok) {
+    return readFail(bracketRule.problem);
+  }
+  const bracketDetail = bracketRule.value.detail as BracketTableDetail;
+  const bracketSet = bracketDetail.bracketSets.find(
     (candidate) => candidate.filingStatus === filingStatus,
   );
+
   if (bracketSet === undefined || bracketSet.brackets.length === 0) {
     return readFail(
       unavailable(
         FederalReason.COMPONENT_NOT_STATED,
-        `No annual bracket set for filing status ${filingStatus}`,
-        scheduleKey,
+        `No annual bracket set for filing status ${filingStatus}; the estimate is unavailable ` +
+          'rather than borrowing another status’s table',
+        FederalRuleKey.ANNUAL_RATE_BRACKETS,
         `bracketSets[${filingStatus}]`,
       ),
     );
   }
 
-  const taxableIncome = max(subtract(annualGrossIncome, standardDeduction.value), zero());
+  const taxableIncome = max(
+    subtract(subtract(annualGrossIncome, standardDeduction.value), personalExemption.value),
+    zero(),
+  );
 
-  const ordered = [...bracketSet.brackets].sort((a, b) => a.ordinal - b.ordinal);
+  // Progressive application: each bracket taxes only the slice inside it.
+  // Track A brackets carry no base-amount column (§6.3), so the tax is summed
+  // across slices rather than read off a "tax on the first X" figure.
+  const ordered = [...bracketSet.brackets].sort((a, b) => a.rowOrder - b.rowOrder);
+  const slices: Money[] = [];
+
   for (const bracket of ordered) {
-    const aboveLower =
-      bracket.lowerBound === null || compare(taxableIncome, money(bracket.lowerBound)) >= 0;
-    const belowUpper =
-      bracket.upperBound === null || compare(taxableIncome, money(bracket.upperBound)) < 0;
-
-    if (!aboveLower || !belowUpper) {
+    const lower = bracket.atLeast === null ? zero() : money(bracket.atLeast);
+    if (compare(taxableIncome, lower) <= 0) {
+      continue;
+    }
+    const upper = bracket.lessThan === null ? taxableIncome : money(bracket.lessThan);
+    const ceiling = compare(taxableIncome, upper) < 0 ? taxableIncome : upper;
+    const slice = max(subtract(ceiling, lower), zero());
+    if (slice.isZero()) {
       continue;
     }
 
-    const rate = requireComponent(bracket.rate, scheduleKey, `brackets[${bracket.ordinal}].rate`);
+    const rate = readRate(
+      bracket.rate,
+      bracket.unit,
+      FederalRuleKey.ANNUAL_RATE_BRACKETS,
+      `brackets[${String(bracket.rowOrder)}].rate`,
+    );
     if (!rate.ok) {
       return readFail(rate.problem);
     }
-
-    const lower = bracket.lowerBound === null ? zero() : money(bracket.lowerBound);
-    const baseTax =
-      bracket.baseTax === undefined || bracket.baseTax === null ? zero() : money(bracket.baseTax);
-    const excess = max(subtract(taxableIncome, lower), zero());
-    const liability = roundTax(add(baseTax, multiply(excess, rate.value)), policy);
-
-    return readOk({
-      displayOnly: true,
-      taxableIncome,
-      liability,
-      ruleKeys: [deductionRule.value.ruleKey, scheduleKey],
-    });
+    slices.push(multiply(slice, rate.value));
   }
 
-  return readFail(
-    unavailable(
-      FederalReason.COMPONENT_NOT_STATED,
-      'No annual bracket covers the taxable income; the schedule is incomplete',
-      scheduleKey,
-      'bracketSets',
-    ),
-  );
+  return readOk({
+    isEstimate: true,
+    taxableIncome,
+    liability: roundTax(slices.length === 0 ? zero() : sum(slices), policy),
+    limitations: TRACK_A_LIMITATIONS,
+    ruleKeys: [
+      FederalRuleKey.ANNUAL_STANDARD_DEDUCTION,
+      FederalRuleKey.ANNUAL_PERSONAL_EXEMPTION,
+      FederalRuleKey.ANNUAL_RATE_BRACKETS,
+    ],
+  });
+}
+
+/** Effective rate on the projection. Null when gross is zero — never divide by it. */
+export function effectiveAnnualRate(
+  liability: Money,
+  annualGrossIncome: Money,
+  scale: number,
+): Money | null {
+  if (annualGrossIncome.isZero()) {
+    return null;
+  }
+  return liability.dividedBy(annualGrossIncome).toDecimalPlaces(scale);
+}
+
+/** Sums annual figures. Exported so the caller can compose without re-deriving. */
+export function addAnnual(a: Money, b: Money): Money {
+  return add(a, b);
 }

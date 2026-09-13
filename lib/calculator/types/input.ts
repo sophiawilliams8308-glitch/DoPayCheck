@@ -157,6 +157,15 @@ export interface DeductionInput {
   /** Application order, ascending. Ties fall back to array order. */
   readonly ordinal?: number;
   /**
+   * Deduction TYPE, e.g. TRADITIONAL_401K or SECTION125_HEALTH (Phase 4 §12.2).
+   *
+   * Selects the versioned, sourced taxability profile that decides which wage
+   * buckets this deduction reduces. Optional so every Phase 3 caller stays
+   * valid; when absent the federal engine has no profile and reports the
+   * scenario unsupported rather than guessing a treatment.
+   */
+  readonly deductionTypeKey?: string;
+  /**
    * Which buckets this deduction reduces.
    *
    * REQUIRED and never inferred: a deduction is not automatically pre-tax for every tax

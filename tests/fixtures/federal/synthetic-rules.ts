@@ -4,32 +4,35 @@ import type {
   FederalRuleEntry,
   ResolvedFederalRuleSet,
 } from '@/lib/tax/federal/rules/resolved-rule-set';
+import {
+  Taxability,
+  type DeductionTaxabilityProfile,
+} from '@/lib/tax/federal/wages/federalWageBuckets';
 
 /**
- * SYNTHETIC FEDERAL RULE FIXTURES — NOT TAX DATA.
+ * SYNTHETIC — NOT TAX DATA.
  *
  * ===========================================================================
- * READ THIS BEFORE USING ANY NUMBER BELOW.
+ * READ THIS BEFORE USING ANY NUMBER BELOW (spec §33.5).
  *
- * Every value here is INVENTED to exercise arithmetic and control flow. None of it is an IRS
- * figure, none of it is verified, and none of it may ever reach production, a seed, a
- * migration or a fixture presented as authoritative.
+ * Every value here is INVENTED to exercise arithmetic and control flow. None is
+ * an IRS figure, none is verified, and none may reach production, a seed, a
+ * migration, or a fixture presented as authoritative.
  *
- * The numbers are chosen to be obviously fake — round rates like 0.1, a wage base of 1000 —
- * precisely so a real figure can never be confused for one of these, and so a test that
- * accidentally asserted a real-world amount would stand out immediately.
+ * The numbers are chosen to be obviously fake — round rates like ten percent, a
+ * wage base of 1000, tax year 2099 — precisely so a real figure can never be
+ * mistaken for one of these, and so a test that accidentally asserted a
+ * real-world amount would stand out.
  *
- * Official IRS worked examples remain PENDING_DATA. When they arrive they replace these
- * fixtures in place: the shapes here are the shapes real data takes, so no architectural
- * change is needed to swap them in.
+ * Official IRS worked examples remain PENDING DATA (Appendix A-40). When they
+ * arrive they go in the golden registry, not here.
  * ===========================================================================
  */
 
 export const SYNTHETIC = true;
-
-/** A tax year far outside any real one, so a fixture can never look authoritative. */
 export const SYNTHETIC_TAX_YEAR = 2099;
 export const SYNTHETIC_EFFECTIVE_DATE = '2099-06-15T00:00:00.000Z';
+export const SYNTHETIC_ENGINE_VERSION = 'synthetic-engine';
 
 export function syntheticReference(
   key: string,
@@ -51,174 +54,294 @@ export function syntheticReference(
   };
 }
 
-function entry(key: string, detail: unknown, verificationStatus = 'VERIFIED'): FederalRuleEntry {
-  return {
-    available: true,
-    rule: {
-      key: key as FederalRuleKey,
-      reference: syntheticReference(key),
-      detail,
-      verificationStatus,
-    },
-  };
-}
+// --- synthetic details, all values invented ---------------------------------
 
-/** Synthetic Worksheet 1A detail: a flat 10% over 100, plus a 200 standard amount. */
-export const syntheticWorksheet1A = {
-  methodology: 'PUB15T_WORKSHEET_1A' as const,
-  standardDeductionAmounts: [
-    { filingStatus: 'SYNTHETIC_SINGLE', amount: '200' },
-    { filingStatus: 'SYNTHETIC_MARRIED', amount: '400' },
-  ],
+/** Ten percent over 100, with a 200 line-1g amount for the single status. */
+export const syntheticStandardSchedule = {
+  shape: 'WITHHOLDING_SCHEDULE' as const,
+  method: 'PERCENTAGE_AUTOMATED' as const,
+  scheduleType: 'STANDARD' as const,
+  payPeriodBasis: 'ANNUAL' as const,
   schedules: [
     {
-      filingStatus: 'SYNTHETIC_SINGLE',
-      step2Checkbox: false,
+      filingStatus: 'SINGLE_OR_MFS' as const,
       rows: [
         {
-          ordinal: 0,
-          atLeast: null,
+          rowOrder: 0,
+          atLeast: '0',
           lessThan: '100',
           baseAmount: '0',
-          marginalRate: '0',
-          excessOver: '0',
+          rate: '0',
+          unit: 'PERCENT' as const,
         },
         {
-          ordinal: 1,
+          rowOrder: 1,
           atLeast: '100',
           lessThan: null,
           baseAmount: '0',
-          marginalRate: '0.1',
-          excessOver: '100',
+          rate: '10',
+          unit: 'PERCENT' as const,
         },
       ],
     },
     {
-      filingStatus: 'SYNTHETIC_SINGLE',
-      step2Checkbox: true,
+      filingStatus: 'MARRIED_FILING_JOINTLY' as const,
       rows: [
         {
-          ordinal: 0,
-          atLeast: null,
+          rowOrder: 0,
+          atLeast: '0',
+          lessThan: null,
+          baseAmount: '0',
+          rate: '5',
+          unit: 'PERCENT' as const,
+        },
+      ],
+    },
+  ],
+};
+
+export const syntheticStep2Schedule = {
+  shape: 'WITHHOLDING_SCHEDULE' as const,
+  method: 'PERCENTAGE_AUTOMATED' as const,
+  scheduleType: 'STEP2_CHECKBOX' as const,
+  payPeriodBasis: 'ANNUAL' as const,
+  schedules: [
+    {
+      filingStatus: 'SINGLE_OR_MFS' as const,
+      rows: [
+        {
+          rowOrder: 0,
+          atLeast: '0',
           lessThan: '50',
           baseAmount: '0',
-          marginalRate: '0',
-          excessOver: '0',
+          rate: '0',
+          unit: 'PERCENT' as const,
         },
         {
-          ordinal: 1,
+          rowOrder: 1,
           atLeast: '50',
           lessThan: null,
           baseAmount: '0',
-          marginalRate: '0.2',
-          excessOver: '50',
-        },
-      ],
-    },
-    {
-      filingStatus: 'SYNTHETIC_MARRIED',
-      step2Checkbox: false,
-      rows: [
-        {
-          ordinal: 0,
-          atLeast: null,
-          lessThan: null,
-          baseAmount: '0',
-          marginalRate: '0.05',
-          excessOver: '0',
+          rate: '20',
+          unit: 'PERCENT' as const,
         },
       ],
     },
   ],
 };
 
-/** Synthetic FICA: 10% employee / 10% employer, wage base 1000. */
-export const syntheticSocialSecurity = {
-  employeeRate: '0.1',
-  employerRate: '0.1',
-  wageBase: '1000',
-};
-
-export const syntheticMedicare = {
-  employeeRate: '0.02',
-  employerRate: '0.02',
-  hasWageLimit: false,
-};
-
-export const syntheticAdditionalMedicare = {
-  employeeRate: '0.01',
-  thresholds: [
-    { filingStatus: 'SYNTHETIC_SINGLE', amount: '2000' },
-    { filingStatus: 'SYNTHETIC_MARRIED', amount: '3000' },
+export const syntheticStep2Adjustment = {
+  shape: 'AMOUNT_BY_FILING_STATUS' as const,
+  amounts: [
+    { filingStatus: 'SINGLE_OR_MFS' as const, amount: '200' },
+    { filingStatus: 'MARRIED_FILING_JOINTLY' as const, amount: '400' },
+    // Deliberately NOT_STATED, to exercise the honest-refusal path.
+    { filingStatus: 'HEAD_OF_HOUSEHOLD' as const, amount: null },
   ],
-  thresholdInclusive: false,
 };
 
-/** Additional Medicare with UNVERIFIED comparison semantics, to exercise the pending path. */
-export const syntheticAdditionalMedicarePending = {
-  ...syntheticAdditionalMedicare,
-  thresholdInclusive: null,
-};
+export const syntheticAllowanceValue = { shape: 'SCALAR_AMOUNT' as const, amount: '50' };
 
-export const syntheticFuta = {
-  grossRate: '0.06',
-  standardCredit: '0.054',
-  wageBase: '700',
-};
-
-export const syntheticPre2020Allowance = { allowanceAmount: '50' };
-
-export const syntheticSupplemental = {
-  optionalFlatPermitted: true,
-  optionalFlatRate: '0.22',
-  mandatoryFlatRate: '0.37',
-  mandatoryFlatThreshold: '1000',
-};
-
-export const syntheticNraAdjustment = {
-  amounts: [{ payFrequency: 'BIWEEKLY', w4Revision: 'REVISION_2020_PLUS' as const, amount: '100' }],
-};
-
-export const syntheticAnnualRateSchedule = {
-  methodology: 'ANNUAL_1040_ESTIMATE' as const,
-  bracketSets: [
-    {
-      filingStatus: 'SYNTHETIC_SINGLE',
-      brackets: [
-        { ordinal: 0, lowerBound: '0', upperBound: '1000', rate: '0.1', baseTax: '0' },
-        { ordinal: 1, lowerBound: '1000', upperBound: null, rate: '0.2', baseTax: '100' },
-      ],
-    },
+export const syntheticPayPeriods = {
+  shape: 'COUNT_BY_PAY_PERIOD' as const,
+  counts: [
+    { payFrequency: 'WEEKLY', count: 52 },
+    { payFrequency: 'BIWEEKLY', count: 26 },
+    { payFrequency: 'SEMIMONTHLY', count: 24 },
+    { payFrequency: 'MONTHLY', count: 12 },
+    { payFrequency: 'QUARTERLY', count: 4 },
+    { payFrequency: 'DAILY', count: 260 },
+    // V-05: no official factor published, so the engine must refuse.
+    { payFrequency: 'ANNUAL', count: null },
   ],
+};
+
+export const syntheticRoundingPolicy = {
+  shape: 'POLICY' as const,
+  policyId: 'synthetic-rounding',
+  currencyScale: 2,
+  currencyMode: 'HALF_UP' as const,
+  intermediateScale: 12,
+  appliedAt: 'TAX_LEVEL' as const,
+};
+
+const rate = (value: string | null, appliesTo: 'EMPLOYEE' | 'EMPLOYER') => ({
+  shape: 'RATE' as const,
+  rate: value,
+  unit: 'PERCENT' as const,
+  appliesTo,
+});
+
+export const syntheticSsEmployeeRate = rate('10', 'EMPLOYEE');
+export const syntheticSsEmployerRate = rate('10', 'EMPLOYER');
+export const syntheticSsWageBase = {
+  shape: 'WAGE_BASE' as const,
+  amount: '1000',
+  basis: 'ANNUAL' as const,
+  applicability: 'APPLIES' as const,
+};
+
+export const syntheticMedicareEmployeeRate = rate('2', 'EMPLOYEE');
+export const syntheticMedicareEmployerRate = rate('2', 'EMPLOYER');
+/** §14.3 — the explicit NOT_APPLICABLE record that makes "uncapped" data-driven. */
+export const syntheticMedicareWageBase = {
+  shape: 'WAGE_BASE' as const,
+  amount: null,
+  basis: 'ANNUAL' as const,
+  applicability: 'NOT_APPLICABLE' as const,
+};
+/** A capped Medicare fixture, to prove the cap path is data-driven (§14.4 case 4). */
+export const syntheticMedicareWageBaseCapped = {
+  shape: 'WAGE_BASE' as const,
+  amount: '500',
+  basis: 'ANNUAL' as const,
+  applicability: 'APPLIES' as const,
+};
+
+export const syntheticAddlMedicareRate = rate('1', 'EMPLOYEE');
+export const syntheticAddlMedicareThreshold = {
+  shape: 'THRESHOLD' as const,
+  amount: '2000',
+  basis: 'ANNUAL_YTD' as const,
+  /** V-02 unresolved — surfaced as a disclosure, never guessed. */
+  inclusive: null,
+};
+
+export const syntheticFutaGrossRate = rate('10', 'EMPLOYER');
+export const syntheticFutaStandardCredit = rate('4', 'EMPLOYER');
+export const syntheticFutaWageBase = {
+  shape: 'WAGE_BASE' as const,
+  amount: '700',
+  basis: 'ANNUAL' as const,
+  applicability: 'APPLIES' as const,
+};
+
+export const syntheticSuppOptionalFlat = rate('20', 'EMPLOYEE');
+export const syntheticSuppMandatoryFlat = rate('40', 'EMPLOYEE');
+export const syntheticSuppThreshold = {
+  shape: 'THRESHOLD' as const,
+  amount: '1000',
+  basis: 'ANNUAL_YTD' as const,
+  inclusive: false,
 };
 
 export const syntheticAnnualStandardDeduction = {
-  amounts: [{ filingStatus: 'SYNTHETIC_SINGLE', amount: '500' }],
+  shape: 'AMOUNT_BY_FILING_STATUS' as const,
+  amounts: [
+    { filingStatus: 'SINGLE_OR_MFS' as const, amount: '500' },
+    { filingStatus: 'MARRIED_FILING_JOINTLY' as const, amount: '1000' },
+    // Head of Household is PENDING DATA (§4.3) — Track A must not borrow.
+  ],
+};
+
+export const syntheticAnnualPersonalExemption = {
+  shape: 'SCALAR_AMOUNT' as const,
+  amount: '100',
+};
+
+export const syntheticAnnualBrackets = {
+  shape: 'BRACKET_TABLE' as const,
+  bracketSets: [
+    {
+      filingStatus: 'SINGLE_OR_MFS' as const,
+      brackets: [
+        { rowOrder: 0, atLeast: '0', lessThan: '1000', rate: '10', unit: 'PERCENT' as const },
+        { rowOrder: 1, atLeast: '1000', lessThan: null, rate: '20', unit: 'PERCENT' as const },
+      ],
+    },
+  ],
+};
+
+const DETAILS: Record<string, unknown> = {
+  [FederalRuleKey.FIT_RATE_SCHEDULE_STANDARD]: syntheticStandardSchedule,
+  [FederalRuleKey.FIT_RATE_SCHEDULE_STEP2]: syntheticStep2Schedule,
+  [FederalRuleKey.FIT_STEP2_UNCHECKED_ADJUSTMENT]: syntheticStep2Adjustment,
+  [FederalRuleKey.FIT_ALLOWANCE_VALUE]: syntheticAllowanceValue,
+  [FederalRuleKey.FIT_PAY_PERIODS_PER_YEAR]: syntheticPayPeriods,
+  [FederalRuleKey.FIT_ROUNDING_POLICY]: syntheticRoundingPolicy,
+  [FederalRuleKey.SUPP_OPTIONAL_FLAT_RATE]: syntheticSuppOptionalFlat,
+  [FederalRuleKey.SUPP_MANDATORY_FLAT_RATE]: syntheticSuppMandatoryFlat,
+  [FederalRuleKey.SUPP_MANDATORY_THRESHOLD]: syntheticSuppThreshold,
+  [FederalRuleKey.SS_EMPLOYEE_RATE]: syntheticSsEmployeeRate,
+  [FederalRuleKey.SS_EMPLOYER_RATE]: syntheticSsEmployerRate,
+  [FederalRuleKey.SS_WAGE_BASE]: syntheticSsWageBase,
+  [FederalRuleKey.MEDICARE_EMPLOYEE_RATE]: syntheticMedicareEmployeeRate,
+  [FederalRuleKey.MEDICARE_EMPLOYER_RATE]: syntheticMedicareEmployerRate,
+  [FederalRuleKey.MEDICARE_WAGE_BASE]: syntheticMedicareWageBase,
+  [FederalRuleKey.ADDL_MEDICARE_EMPLOYEE_RATE]: syntheticAddlMedicareRate,
+  [FederalRuleKey.ADDL_MEDICARE_WITHHOLDING_THRESHOLD]: syntheticAddlMedicareThreshold,
+  [FederalRuleKey.FUTA_GROSS_RATE]: syntheticFutaGrossRate,
+  [FederalRuleKey.FUTA_STANDARD_CREDIT]: syntheticFutaStandardCredit,
+  [FederalRuleKey.FUTA_WAGE_BASE]: syntheticFutaWageBase,
+  [FederalRuleKey.ANNUAL_STANDARD_DEDUCTION]: syntheticAnnualStandardDeduction,
+  [FederalRuleKey.ANNUAL_PERSONAL_EXEMPTION]: syntheticAnnualPersonalExemption,
+  [FederalRuleKey.ANNUAL_RATE_BRACKETS]: syntheticAnnualBrackets,
+};
+
+/** Deduction taxability profiles with DELIBERATELY DIFFERENT bucket flags. */
+export const SYNTHETIC_PROFILES: Readonly<Record<string, DeductionTaxabilityProfile>> = {
+  // Reduces income tax wages only — the classic FICA trap.
+  SYNTHETIC_DEFERRAL: {
+    deductionTypeKey: 'SYNTHETIC_DEFERRAL',
+    reducesFederalIncomeTaxWages: Taxability.TRUE,
+    reducesSocialSecurityWages: Taxability.FALSE,
+    reducesMedicareWages: Taxability.FALSE,
+    reducesFutaWages: Taxability.FALSE,
+    ruleId: 'synthetic-profile-deferral',
+    sourceIds: ['synthetic-source-profile'],
+  },
+  // Four DIFFERENT flags, proving buckets are independent (§19.3).
+  SYNTHETIC_MIXED: {
+    deductionTypeKey: 'SYNTHETIC_MIXED',
+    reducesFederalIncomeTaxWages: Taxability.TRUE,
+    reducesSocialSecurityWages: Taxability.TRUE,
+    reducesMedicareWages: Taxability.FALSE,
+    reducesFutaWages: Taxability.TRUE,
+    ruleId: 'synthetic-profile-mixed',
+    sourceIds: ['synthetic-source-profile'],
+  },
+  // A gap the engine must refuse rather than assume away.
+  SYNTHETIC_UNSTATED: {
+    deductionTypeKey: 'SYNTHETIC_UNSTATED',
+    reducesFederalIncomeTaxWages: Taxability.TRUE,
+    reducesSocialSecurityWages: Taxability.NOT_STATED,
+    reducesMedicareWages: Taxability.TRUE,
+    reducesFutaWages: Taxability.TRUE,
+    ruleId: 'synthetic-profile-unstated',
+    sourceIds: ['synthetic-source-profile'],
+  },
+  // Post-tax: reduces nothing (§12.6 case 5).
+  SYNTHETIC_POST_TAX: {
+    deductionTypeKey: 'SYNTHETIC_POST_TAX',
+    reducesFederalIncomeTaxWages: Taxability.FALSE,
+    reducesSocialSecurityWages: Taxability.FALSE,
+    reducesMedicareWages: Taxability.FALSE,
+    reducesFutaWages: Taxability.FALSE,
+    ruleId: 'synthetic-profile-post-tax',
+    sourceIds: ['synthetic-source-profile'],
+  },
 };
 
 export interface SyntheticRuleSetOptions {
-  readonly omit?: readonly FederalRuleKey[];
-  readonly unverified?: readonly FederalRuleKey[];
-  readonly conflicted?: readonly FederalRuleKey[];
-  readonly additionalMedicarePending?: boolean;
-  readonly includeAnnual?: boolean;
-  readonly includePre2020?: boolean;
-  readonly includeSupplemental?: boolean;
-  readonly includeNra?: boolean;
+  readonly omit?: readonly string[];
+  readonly unverified?: readonly string[];
+  readonly conflicted?: readonly string[];
+  readonly overrides?: Readonly<Record<string, unknown>>;
 }
 
-/** Assembles a frozen synthetic rule set. Every value inside is invented — see the header. */
+/** Assembles a frozen synthetic rule set. Every value inside is invented. */
 export function syntheticRuleSet(options: SyntheticRuleSetOptions = {}): ResolvedFederalRuleSet {
-  const omit = new Set<string>(options.omit ?? []);
-  const unverified = new Set<string>(options.unverified ?? []);
-  const conflicted = new Set<string>(options.conflicted ?? []);
+  const omit = new Set(options.omit ?? []);
+  const unverified = new Set(options.unverified ?? []);
+  const conflicted = new Set(options.conflicted ?? []);
+  const overrides = options.overrides ?? {};
 
   const entries: Record<string, FederalRuleEntry> = {};
   const references: RuleReference[] = [];
 
-  const put = (key: FederalRuleKey, detail: unknown): void => {
+  for (const [key, detail] of Object.entries(DETAILS)) {
     if (omit.has(key)) {
-      return;
+      continue;
     }
     if (conflicted.has(key)) {
       entries[key] = {
@@ -229,41 +352,32 @@ export function syntheticRuleSet(options: SyntheticRuleSetOptions = {}): Resolve
           detail: '2 ACTIVE rules apply simultaneously (synthetic)',
         },
       };
-      return;
+      continue;
     }
-    entries[key] = entry(key, detail, unverified.has(key) ? 'PENDING' : 'VERIFIED');
-    references.push(syntheticReference(key));
-  };
-
-  put(FederalRuleKey.FIT_WORKSHEET_1A, syntheticWorksheet1A);
-  put(FederalRuleKey.FICA_SOCIAL_SECURITY, syntheticSocialSecurity);
-  put(FederalRuleKey.FICA_MEDICARE, syntheticMedicare);
-  put(
-    FederalRuleKey.FICA_ADDITIONAL_MEDICARE,
-    options.additionalMedicarePending === true
-      ? syntheticAdditionalMedicarePending
-      : syntheticAdditionalMedicare,
-  );
-  put(FederalRuleKey.FUTA, syntheticFuta);
-
-  if (options.includePre2020 === true) {
-    put(FederalRuleKey.FIT_PRE2020_ALLOWANCE, syntheticPre2020Allowance);
-  }
-  if (options.includeSupplemental === true) {
-    put(FederalRuleKey.FIT_SUPPLEMENTAL, syntheticSupplemental);
-  }
-  if (options.includeNra === true) {
-    put(FederalRuleKey.FIT_NRA_ADJUSTMENT, syntheticNraAdjustment);
-  }
-  if (options.includeAnnual === true) {
-    put(FederalRuleKey.ANNUAL_RATE_SCHEDULE, syntheticAnnualRateSchedule);
-    put(FederalRuleKey.ANNUAL_STANDARD_DEDUCTION, syntheticAnnualStandardDeduction);
+    const reference = syntheticReference(key);
+    references.push(reference);
+    entries[key] = {
+      available: true,
+      rule: {
+        key: key as never,
+        reference,
+        detail: overrides[key] ?? detail,
+        verificationStatus: unverified.has(key)
+          ? 'PENDING'
+          : key === FederalRuleKey.MEDICARE_WAGE_BASE
+            ? 'NOT_APPLICABLE'
+            : 'VERIFIED',
+      },
+    };
   }
 
   return {
     taxYear: SYNTHETIC_TAX_YEAR,
     effectiveDate: SYNTHETIC_EFFECTIVE_DATE,
     jurisdictionCode: 'US',
+    engineVersion: SYNTHETIC_ENGINE_VERSION,
+    resolvedAt: SYNTHETIC_EFFECTIVE_DATE,
+    missing: [],
     entries: entries as ResolvedFederalRuleSet['entries'],
     ruleReferences: references,
     sourceIds: [...new Set(references.flatMap((reference) => reference.sourceIds))],

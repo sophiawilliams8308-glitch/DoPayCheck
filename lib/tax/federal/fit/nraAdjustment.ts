@@ -4,23 +4,27 @@ import { FederalReason, unavailable } from '../errors/federal-errors';
 import { FederalRuleKey } from '../rule-keys';
 import { readDetail, requireComponent, type Read, readFail, readOk } from '../rules/read-detail';
 import type { ResolvedFederalRuleSet } from '../rules/resolved-rule-set';
-import type { NraAdjustmentDetail } from '../rules/detail-schemas';
+import type { AmountByPayPeriodDetail } from '../rules/detail-schemas';
 import type { FederalFeatureFlags } from '../flags';
-import type { W4Revision } from '../types';
+import { W4Revision, type W4RevisionValue } from '../types';
 
 /**
- * Nonresident-alien wage adjustment (Phase 4, Track B).
+ * Nonresident-alien wage addition — spec §7.8, decision D-FIT-3.
  *
  * ===========================================================================
- * STRUCTURE MODELLED. BEHAVIOUR OFF BY DEFAULT.
+ * STRUCTURE MODELLED. BEHAVIOUR FLAGGED OFF.
  *
- * Pub. 15-T requires an additional amount to be added to an NRA employee's wages before the
- * rate schedule is applied, and the figure differs by pay frequency and W-4 revision. Those
- * figures are not verified, so `FEDERAL_NRA_ADJUSTMENT` defaults OFF and an NRA scenario is
- * reported UNSUPPORTED_SCENARIO.
+ * Pub. 15-T requires an amount to be added to an NRA employee's wages before
+ * the withholding tables are applied — Table 1 for 2019-or-earlier Forms W-4,
+ * Table 2 for 2020-or-later. The addition does not affect Social Security,
+ * Medicare or FUTA, is not reported on Form W-2, does not increase the
+ * employee's liability, does not apply to supplemental wages taxed at the flat
+ * rates, and does NOT apply to students and business apprentices from India.
  *
- * There is no approximation path. Withholding too little for a nonresident alien creates a
- * real liability for the employee, and guessing the adjustment would do exactly that.
+ * That India carve-out is unresolved, so `FEDERAL_NRA_ADJUSTMENT` is OFF and an
+ * NRA scenario returns UNSUPPORTED_SCENARIO. A half-correct NRA path is worse
+ * than an honest refusal: under-withholding here creates a real liability for
+ * the employee.
  * ===========================================================================
  */
 
@@ -32,46 +36,47 @@ export interface NraAdjustment {
 export function resolveNraAdjustment(
   ruleSet: ResolvedFederalRuleSet,
   payFrequency: string,
-  revision: W4Revision,
+  revision: W4RevisionValue,
   flags: FederalFeatureFlags,
 ): Read<NraAdjustment> {
+  const key =
+    revision === W4Revision.PRE_2020
+      ? FederalRuleKey.FIT_NRA_WAGE_ADDITION_PRE2020
+      : FederalRuleKey.FIT_NRA_WAGE_ADDITION_POST2019;
+
   if (!flags.FEDERAL_NRA_ADJUSTMENT) {
     return readFail(
       unavailable(
         FederalReason.FEATURE_DISABLED,
-        'Nonresident-alien withholding is not supported: the FEDERAL_NRA_ADJUSTMENT flag is ' +
-          'off because the adjustment amounts are not yet verified. No approximation is applied.',
-        FederalRuleKey.FIT_NRA_ADJUSTMENT,
+        'Nonresident-alien withholding is not supported in Phase 4: FEDERAL_NRA_ADJUSTMENT is off ' +
+          'because the India carve-out is unresolved. No approximation is applied.',
+        key,
       ),
     );
   }
 
-  const found = readDetail(ruleSet, FederalRuleKey.FIT_NRA_ADJUSTMENT);
+  const found = readDetail(ruleSet, key);
   if (!found.ok) {
     return readFail(found.problem);
   }
-  const detail = found.value.detail as NraAdjustmentDetail;
-  const ruleKey = found.value.ruleKey;
-
-  const row = detail.amounts.find(
-    (candidate) => candidate.payFrequency === payFrequency && candidate.w4Revision === revision,
-  );
+  const detail = found.value.detail as AmountByPayPeriodDetail;
+  const row = detail.amounts.find((candidate) => candidate.payFrequency === payFrequency);
 
   if (row === undefined) {
     return readFail(
       unavailable(
         FederalReason.COMPONENT_NOT_STATED,
-        `No NRA adjustment stated for ${payFrequency} with a ${revision} W-4`,
-        ruleKey,
-        `amounts[${payFrequency}/${revision}]`,
+        `No NRA wage addition stated for ${payFrequency}`,
+        key,
+        `amounts[${payFrequency}]`,
       ),
     );
   }
 
-  const amount = requireComponent(row.amount, ruleKey, `amounts[${payFrequency}/${revision}]`);
+  const amount = requireComponent(row.amount, key, `amounts[${payFrequency}]`);
   if (!amount.ok) {
     return readFail(amount.problem);
   }
 
-  return readOk({ amount: amount.value, ruleKey });
+  return readOk({ amount: amount.value, ruleKey: key });
 }
