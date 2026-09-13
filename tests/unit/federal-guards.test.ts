@@ -255,3 +255,31 @@ describe('employer and employee separation', () => {
     expect(source).not.toMatch(/\bemployee\b/);
   });
 });
+
+describe('public surface (§38.2)', () => {
+  it('keeps worksheet internals out of the module barrel', () => {
+    // §38.2: internal worksheet functions stay internal so they can be
+    // refactored without breaking consumers. The barrel exports the two entry
+    // points, the key constants and the schemas — not the machinery.
+    const barrel = code(readFileSync(join(FEDERAL, 'index.ts'), 'utf8'));
+    const reExports = [...barrel.matchAll(/^export \{([^}]*)\}/gm)]
+      .flatMap((match) => (match[1] ?? '').split(','))
+      .map((name) => name.trim().split(/\s+as\s+/)[0] ?? '')
+      .filter((name) => name !== '');
+
+    for (const internal of [
+      'runWorksheet1A',
+      'findRow',
+      'validateScheduleRows',
+      'calculateSocialSecurity',
+      'calculateMedicare',
+      'calculateAdditionalMedicare',
+      'calculateFuta',
+      'calculateSupplemental',
+      'applyWageBaseCap',
+      'applyThresholdFloor',
+    ]) {
+      expect(reExports, `${internal} must not be re-exported`).not.toContain(internal);
+    }
+  });
+});

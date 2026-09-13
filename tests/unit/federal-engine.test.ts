@@ -4,6 +4,7 @@ import { calculateFederalTaxes, FEDERAL_ENGINE_VERSION } from '@/lib/tax/federal
 import { SupplementalMethod } from '@/lib/tax/federal/fit/supplemental';
 import { FederalRuleKey, requiredRuleKeys } from '@/lib/tax/federal/rule-keys';
 import { deriveScenario, toFederalW4 } from '@/lib/tax/federal/context';
+import { toUserTrace } from '@/lib/tax/federal/trace/federal-trace';
 
 import { syntheticRuleSet } from '../fixtures/federal/synthetic-rules';
 import { asPerPeriod, context, deduction } from '../fixtures/federal/context';
@@ -272,14 +273,22 @@ describe('status and missing data (§28)', () => {
 });
 
 describe('trace and determinism (§27, §29)', () => {
-  it('records the required stages', () => {
-    const result = calculateFederalTaxes(context({ includeAnnualEstimate: true }));
+  it('records every one of the 15 required stages for a full scenario (§27.1)', () => {
+    const result = calculateFederalTaxes(
+      context({ includeAnnualEstimate: true, supplemental: '50' }),
+    );
     const stages = result.trace.map((entry) => entry.stage);
+    // The full §27.1 list, in spec order. A stage may be omitted only when it is
+    // genuinely not applicable — which, for this scenario, none of them is.
     for (const stage of [
       'WAGE_BUCKETS',
+      'TAX_YEAR_RESOLUTION',
+      'RULE_RESOLUTION',
       'PAY_FREQUENCY',
+      'W4_NORMALIZATION',
       'WORKSHEET_1A',
       'SCHEDULE_ROW',
+      'SUPPLEMENTAL',
       'SOCIAL_SECURITY',
       'MEDICARE',
       'ADDITIONAL_MEDICARE',
@@ -288,7 +297,50 @@ describe('trace and determinism (§27, §29)', () => {
       'ANNUAL_ESTIMATE',
       'DISCLOSURES',
     ]) {
-      expect(stages).toContain(stage);
+      expect(stages, `stage ${stage} is missing from the trace`).toContain(stage);
+    }
+  });
+
+  it('records the rule identities that authorised the calculation (§27.1 stage 3)', () => {
+    const result = calculateFederalTaxes(context());
+    const resolution = result.trace.find((entry) => entry.stage === 'RULE_RESOLUTION');
+    expect(resolution).toBeDefined();
+    expect(resolution?.rules.length).toBeGreaterThan(0);
+    expect(resolution?.rules[0]?.ruleId).toBeTruthy();
+    expect(resolution?.rules[0]?.version).toBeGreaterThan(0);
+  });
+
+  it('records the W-4 as the worksheet reads it (§27.1 stage 5)', () => {
+    const result = calculateFederalTaxes(context());
+    const w4 = result.trace.find((entry) => entry.stage === 'W4_NORMALIZATION');
+    expect(w4?.outputs['filingStatus']).toBe('SINGLE_OR_MFS');
+    expect(w4?.outputs['claimsExemption']).toBe(false);
+  });
+
+  it('the user projection leaks no rule or source identifier (§27.4)', () => {
+    const result = calculateFederalTaxes(context({ includeAnnualEstimate: true }));
+    const user = toUserTrace(result.trace);
+
+    // Structural: the projection carries no rules/sourceIds fields at all.
+    for (const entry of user) {
+      expect(Object.keys(entry).sort()).toEqual(['label', 'outputs', 'stage']);
+    }
+
+    // And nothing identifier-shaped survives in the values a user would read.
+    const serialized = JSON.stringify(user);
+    for (const reference of result.ruleReferences) {
+      expect(serialized).not.toContain(reference.ruleId);
+    }
+    for (const sourceId of result.sourceIds) {
+      expect(serialized).not.toContain(sourceId);
+    }
+    expect(user.map((entry) => entry.stage)).not.toContain('RULE_RESOLUTION');
+  });
+
+  it('every user-facing stage carries a plain-language label, not a code (§27.4)', () => {
+    for (const entry of toUserTrace(calculateFederalTaxes(context()).trace)) {
+      expect(entry.label).not.toBe(entry.stage);
+      expect(entry.label).not.toMatch(/_/);
     }
   });
 

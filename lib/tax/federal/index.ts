@@ -138,6 +138,72 @@ export function calculateFederalTaxes(
   // ---- 0. W-4 validation (§7.5, §8.4) ------------------------------------------
   const w4Issues = validateFederalW4(context.w4);
 
+  // §27.1 stage 2 — which tax year and instant governed this calculation, and
+  // where they came from. Recorded first so a replay can be checked against it.
+  trace.add({
+    stage: FederalTraceStage.TAX_YEAR_RESOLUTION,
+    description: 'Tax year and effective date the rule set was resolved for',
+    inputs: { taxYear: context.taxYear, effectiveDate: context.effectiveDate },
+    outputs: {
+      taxYear: context.ruleSet.taxYear,
+      effectiveDate: context.ruleSet.effectiveDate,
+      jurisdiction: context.ruleSet.jurisdictionCode,
+      // Metadata only; never used in arithmetic (§2.4).
+      resolvedAt: context.ruleSet.resolvedAt,
+      resolvingEngineVersion: context.ruleSet.engineVersion,
+    },
+    status: context.taxYear === context.ruleSet.taxYear ? 'COMPLETE' : 'RULE_CONFLICT',
+    ...(context.taxYear === context.ruleSet.taxYear
+      ? {}
+      : {
+          note:
+            'The requested tax year does not match the resolved rule set. No cross-year ' +
+            'mixing is permitted between rule versions within one calculation.',
+        }),
+  });
+
+  // §27.1 stage 3 — every rule that was available to this calculation, with its
+  // identity and version. ADMIN-FACING: the user projection omits this stage.
+  trace.add({
+    stage: FederalTraceStage.RULE_RESOLUTION,
+    description: 'Federal rules resolved for this calculation',
+    inputs: { requestedKeys: Object.keys(context.ruleSet.entries).length },
+    outputs: {
+      resolved: context.ruleSet.ruleReferences.length,
+      missing: context.ruleSet.missing.length,
+      sourceIds: context.ruleSet.sourceIds.join(', '),
+      unavailableKeys: Object.entries(context.ruleSet.entries)
+        .filter(([, entry]) => entry !== undefined && !entry.available)
+        .map(([key]) => key)
+        .join(', '),
+    },
+    rules: context.ruleSet.ruleReferences,
+    status: context.ruleSet.missing.length === 0 ? 'COMPLETE' : 'INCOMPLETE',
+  });
+
+  // §27.1 stage 5 — the W-4 as the worksheet reads it. NO free-text employee
+  // detail is recorded: the form's structural answers only (§36).
+  trace.add({
+    stage: FederalTraceStage.W4_NORMALIZATION,
+    description: 'Form W-4 inputs, normalised to worksheet vocabulary',
+    inputs: { revision: context.w4.revision },
+    outputs: {
+      filingStatus: context.w4.filingStatus,
+      step2MultipleJobsChecked: context.w4.step2MultipleJobsChecked,
+      step3CreditsAnnual: context.w4.step3CreditsAnnual,
+      step4aOtherIncomeAnnual: context.w4.step4aOtherIncomeAnnual,
+      step4bDeductionsAnnual: context.w4.step4bDeductionsAnnual,
+      step4cExtraPerPeriod: context.w4.step4cExtraPerPeriod,
+      claimsExemption: context.w4.claimsExemption,
+      isNonresidentAlien: context.w4.isNonresidentAlien,
+      pre2020Allowances: context.w4.pre2020Allowances,
+    },
+    status: w4Issues.length === 0 ? 'COMPLETE' : 'INVALID_INPUT',
+    ...(w4Issues.length === 0
+      ? {}
+      : { note: w4Issues.map((issue) => `${issue.path}: ${issue.message}`).join('; ') }),
+  });
+
   // ---- 1. rule-set completeness + rounding policy (§2.6 step 1, §22) -----------
   const policyRead = resolveRoundingPolicy(context.ruleSet);
   const policy: FederalRoundingPolicy | null = policyRead.ok ? policyRead.value : null;

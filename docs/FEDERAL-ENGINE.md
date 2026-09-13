@@ -216,7 +216,25 @@ publish a new rule tomorrow, replay a snapshot from today, and the answer must n
 
 ---
 
-## 11. Tests
+## 11. Trace and its two audiences
+
+All fifteen §27.1 stages are emitted for a full scenario: wage buckets, tax-year resolution,
+rule resolution, pay frequency, W-4 normalisation, Worksheet 1A, schedule row, supplemental,
+Social Security, Medicare, Additional Medicare, FUTA, employer taxes, rounding, annual estimate
+and disclosures.
+
+`toUserTrace()` is the user-facing projection (§27.4). It drops `rules` and `sourceIds`
+**structurally** rather than redacting field by field — a projection that filtered contents
+would leak the first identifier someone added later — and withholds `RULE_RESOLUTION`
+entirely, since that stage exists for administrators. Tests assert no rule ID or source ID
+appears in the projection.
+
+The W-4 stage records the form's structural answers only. No free-text employee detail is
+traced, and the engine writes no logs at all (§36).
+
+---
+
+## 12. Tests
 
 | File                                                | Covers                                        |
 | --------------------------------------------------- | --------------------------------------------- |
@@ -242,7 +260,7 @@ data lands, as the signal to populate it.
 
 ---
 
-## 12. Feature flags and open items
+## 13. Feature flags and open items
 
 | Item                                    | State                                                          |
 | --------------------------------------- | -------------------------------------------------------------- |

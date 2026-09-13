@@ -88,19 +88,30 @@ const STAGE_LABELS: Record<FederalTraceStage, string> = {
 };
 
 /**
+ * Stages that exist for administrators and are withheld from the user projection.
+ *
+ * `RULE_RESOLUTION` is the whole point of the admin trace and has no place in a
+ * user's explanation: its outputs are rule keys, counts and source identifiers.
+ */
+const ADMIN_ONLY_STAGES: ReadonlySet<string> = new Set([FederalTraceStage.RULE_RESOLUTION]);
+
+/**
  * User-facing projection (§27.4): plain language, no internal identifiers.
  *
- * The same trace object serves both audiences; the user projection must not
- * leak rule IDs or source IDs.
+ * The same trace object serves both audiences. Structurally, this drops `rules`
+ * and `sourceIds` rather than filtering their contents — a projection that tried
+ * to redact identifiers field by field would leak the first one someone added.
  */
 export function toUserTrace(
   entries: readonly FederalTraceEntry[],
 ): readonly { stage: string; label: string; outputs: TraceValues }[] {
-  return entries.map((entry) => ({
-    stage: entry.stage,
-    label: entry.label,
-    outputs: entry.outputs,
-  }));
+  return entries
+    .filter((entry) => !ADMIN_ONLY_STAGES.has(entry.stage))
+    .map((entry) => ({
+      stage: entry.stage,
+      label: entry.label,
+      outputs: entry.outputs,
+    }));
 }
 
 export function traceMoney(value: Money): string {
