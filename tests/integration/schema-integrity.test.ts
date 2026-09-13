@@ -92,10 +92,25 @@ describe.skipIf(!hasDatabase)('database schema integrity', () => {
   });
 
   it('contains no seeded tax rules — the seed ships zero tax data', async () => {
-    // The seed deliberately ships no tax values (spec §2; CLAUDE.md §4). Scoped to exclude
-    // fixtures created by other integration suites, which may run concurrently.
+    // The seed deliberately ships no tax values (spec §2; CLAUDE.md §4).
+    //
+    // Scoped to exclude fixtures created by other integration suites, which run in parallel
+    // against this same database. TWO exclusions are needed, because suites isolate
+    // themselves in two different ways:
+    //
+    //   1. ruleKey `test.*` — the Phase 1–3 convention.
+    //   2. a `TEST-` jurisdiction — the convention every suite follows via
+    //      `createTestJurisdiction`. The Phase 4 federal suite writes CANONICAL `FED.*` keys
+    //      on purpose: the resolver looks rules up by exact key, so a prefixed fixture would
+    //      resolve to nothing and the suite would stop testing what it exists to test.
+    //
+    // The invariant is unchanged: a genuinely seeded rule lands under a REAL jurisdiction
+    // (US, US-CA) and is still counted here.
     const nonTestRules = await testPrisma().taxRule.count({
-      where: { NOT: { ruleKey: { startsWith: 'test.' } } },
+      where: {
+        NOT: { ruleKey: { startsWith: 'test.' } },
+        jurisdiction: { code: { not: { startsWith: 'TEST-' } } },
+      },
     });
     expect(nonTestRules).toBe(0);
   });
