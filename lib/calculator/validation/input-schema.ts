@@ -134,6 +134,46 @@ const paySchema = z
     }
   });
 
+/**
+ * Phase 5 state inputs. ADDITIVE — `w4` above is untouched.
+ *
+ * An amount election must declare its unit. The alternative is guessing whether
+ * a state form's "additional amount" is annual or per period, and guessing wrong
+ * is off by a factor of the pay-period count on every cheque.
+ */
+const stateElectionValueSchema = z
+  .object({
+    fieldKey: z.string().trim().min(1),
+    value: z.union([decimalString, z.number(), z.boolean()]),
+    unit: z.enum(['ANNUAL', 'PER_PERIOD']).optional(),
+  })
+  .superRefine((election, ctx) => {
+    if (typeof election.value === 'string' && election.unit === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['unit'],
+        message: 'An amount election must declare its unit as ANNUAL or PER_PERIOD',
+      });
+    }
+  });
+
+const stateElectionsSchema = z.object({
+  formCode: z.string().trim().min(1),
+  filingStatus: z.string().trim().min(1).optional(),
+  values: z.array(stateElectionValueSchema).optional(),
+});
+
+const stateInputSchema = z.object({
+  workState: z.string().trim().min(1).optional(),
+  residenceState: z.string().trim().min(1).optional(),
+  residencyStatus: z.enum(['RESIDENT', 'NONRESIDENT', 'PART_YEAR_RESIDENT']).optional(),
+  stateElections: z.record(z.string().trim().min(1), stateElectionsSchema).optional(),
+  employerEmployeeCount: z.number().int().min(0).optional(),
+  employerSutaRate: nonNegativeDecimal.optional(),
+  employerPlanElection: z.boolean().optional(),
+  reciprocityCertificateFiled: z.boolean().optional(),
+});
+
 export const calculationInputSchema = z.object({
   taxYear: z.number().int().min(1900).max(2200),
   effectiveDate: z.date(),
@@ -168,6 +208,8 @@ export const calculationInputSchema = z.object({
       localWithholding: nonNegativeDecimal.optional(),
     })
     .optional(),
+  // Phase 5 additive block. Optional throughout, so every existing caller stays valid.
+  state: stateInputSchema.optional(),
 });
 
 export type ValidationOutcome =

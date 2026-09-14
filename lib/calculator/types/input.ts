@@ -184,6 +184,58 @@ export interface YtdInput {
   readonly localWithholding?: DecimalString;
 }
 
+/**
+ * State-specific inputs (Phase 5).
+ *
+ * ===========================================================================
+ * ADDITIVE, AND DELIBERATELY NOT A SECOND W-4.
+ *
+ * `W4Input` is untouched. A state withholding certificate (DE 4, IT-2104, …)
+ * is a DIFFERENT form with different fields, so it arrives as its own
+ * `elections` map keyed by jurisdiction rather than as extra W-4 fields. One
+ * federal W-4 type in the project, as D-W4-1 requires; fifty-one state forms
+ * described as data.
+ * ===========================================================================
+ *
+ * Every field is optional. Omit the whole block and Phase 1-4 behaviour is
+ * unchanged.
+ */
+export interface StateElectionValueInput {
+  readonly fieldKey: string;
+  readonly value: DecimalString | number | boolean;
+  /** MANDATORY on an amount; never defaulted. Absent on counts and booleans. */
+  readonly unit?: 'ANNUAL' | 'PER_PERIOD';
+}
+
+export interface StateElectionsInput {
+  /** The jurisdiction's own form code, as its ELECTION_FORM_SCHEMA declares it. */
+  readonly formCode: string;
+  /** The state's own filing status, which need not match the federal one. */
+  readonly filingStatus?: string;
+  readonly values?: readonly StateElectionValueInput[];
+}
+
+export type ResidencyStatusKey = 'RESIDENT' | 'NONRESIDENT' | 'PART_YEAR_RESIDENT';
+
+export interface StateInput {
+  /** Where the work was performed. Defaults to `employee.workLocation.stateCode`. */
+  readonly workState?: string;
+  /** Where the employee lives. Defaults to the work state. */
+  readonly residenceState?: string;
+  /** Stated, never inferred by comparing two jurisdiction codes. */
+  readonly residencyStatus?: ResidencyStatusKey;
+  /** Per-jurisdiction elections, keyed by jurisdiction code. */
+  readonly stateElections?: Readonly<Record<string, StateElectionsInput>>;
+  /** Drives employer-size thresholds in a state programme descriptor. */
+  readonly employerEmployeeCount?: number;
+  /** The employer's experience-rated SUTA rate — employer-specific, never assumed. */
+  readonly employerSutaRate?: DecimalString;
+  /** True when an approved private plan substitutes for a state programme. */
+  readonly employerPlanElection?: boolean;
+  /** True when the employee filed the certificate a reciprocity agreement requires. */
+  readonly reciprocityCertificateFiled?: boolean;
+}
+
 export interface CalculationInput {
   readonly taxYear: number;
   /** The instant the calculation applies to. Decides which rule versions apply (spec §23). */
@@ -194,4 +246,6 @@ export interface CalculationInput {
   readonly preTaxDeductions?: readonly DeductionInput[];
   readonly postTaxDeductions?: readonly DeductionInput[];
   readonly ytd?: YtdInput;
+  /** Phase 5, optional. Absent means no state-specific input was supplied. */
+  readonly state?: StateInput;
 }
