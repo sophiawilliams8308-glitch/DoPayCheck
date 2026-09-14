@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, lstatSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -22,10 +22,27 @@ const FEDERAL = join(ROOT, 'lib/tax/federal');
 /** Stage A is the ONE module allowed to touch the outside world. */
 const STAGE_A = 'lib/tax/federal/rules/resolver.ts';
 
+/**
+ * Directories the source scanners never descend into.
+ *
+ * These guards target HAND-WRITTEN PRODUCTION SOURCE. `lib/db/generated/` is
+ * emitted by `prisma generate`, is git-ignored, and is absent from the
+ * repository — so it is not source, it cannot acquire an import of its own, and
+ * anything planted there would be overwritten on the next generate. Scanning it
+ * made the guards' workload depend on machine-local output rather than on
+ * repository content, which is the opposite of what a guard is for.
+ */
+const SKIPPED_DIRECTORIES: ReadonlySet<string> = new Set(['generated', 'node_modules']);
+
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir).flatMap((entry) => {
+    if (SKIPPED_DIRECTORIES.has(entry)) {
+      return [];
+    }
     const full = join(dir, entry);
-    if (statSync(full).isDirectory()) {
+    // `lstatSync`, not `statSync`: a symlink is never followed, so no link a
+    // generator emits can send this walk into an unbounded recursion.
+    if (lstatSync(full).isDirectory()) {
       return sourceFiles(full);
     }
     return full.endsWith('.ts') ? [full] : [];
