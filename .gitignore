@@ -19,8 +19,11 @@ dist/
 *.tsbuildinfo
 next-env.d.ts
 
-# Test / coverage output
-coverage/
+# Test / coverage output.
+# ANCHORED to the repository root on purpose: an unanchored `coverage/` matches
+# any directory of that name at any depth, which silently excluded the Phase 5
+# state coverage model at lib/tax/state/coverage/ from being committed.
+/coverage/
 .vitest/
 test-results/
 playwright-report/

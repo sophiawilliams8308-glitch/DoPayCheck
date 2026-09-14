@@ -238,3 +238,44 @@ describe('Step 1 scope', () => {
     expect(deductionInput).not.toMatch(/annualLimit|perPeriodLimit|contributionLimit|maxAmount/);
   });
 });
+
+describe('Step 2 coverage scope', () => {
+  it('claims support for no jurisdiction by default', () => {
+    // Every production cell starts PENDING_RESEARCH. A literal SUPPORTED in the
+    // coverage implementation would be a claim nobody researched.
+    const coverage = code(readFileSync(join(STATE, 'coverage/coverage.ts'), 'utf8'));
+    expect(coverage).toContain(
+      'INITIAL_COVERAGE_STATUS: CoverageStatus = CoverageStatus.PENDING_RESEARCH',
+    );
+  });
+
+  it('hardcodes no jurisdiction list', () => {
+    // The 51 come from the seeded jurisdiction repository. A second list here
+    // would be a second thing to keep in step, and the seed is authoritative.
+    const offenders = stateFiles()
+      .filter((file) => /\bSTATES\s*[:=]\s*\[|'US-[A-Z]{2}'/.test(code(file.text)))
+      .map((file) => file.rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it('fabricates no source URL', () => {
+    // Evidence references Phase 2 Source ids. There is nowhere for an invented
+    // citation to live, and no http(s) literal anywhere under the state engine.
+    const offenders = stateFiles()
+      .filter((file) => /https?:\/\//.test(code(file.text)))
+      .map((file) => file.rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it('persists nothing — the coverage model touches no database', () => {
+    const coverage = code(readFileSync(join(STATE, 'coverage/coverage.ts'), 'utf8'));
+    expect(coverage).not.toMatch(/prisma|getPrisma|findMany|create\(/i);
+  });
+
+  it('keeps the readiness gate dependent on the cell alone', () => {
+    // assessSupport takes one argument. It cannot reach for the engine, a
+    // resolver, or whether a calculation would succeed.
+    const coverage = code(readFileSync(join(STATE, 'coverage/coverage.ts'), 'utf8'));
+    expect(coverage).toContain('export function assessSupport(cell: CoverageCell)');
+  });
+});
