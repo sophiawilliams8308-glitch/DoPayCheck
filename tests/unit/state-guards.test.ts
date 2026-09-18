@@ -279,3 +279,78 @@ describe('Step 2 coverage scope', () => {
     expect(coverage).toContain('export function assessSupport(cell: CoverageCell)');
   });
 });
+
+describe('Step 3.1 scope — prohibited resolver architecture is absent', () => {
+  it('implements no second effective-date predicate', () => {
+    // Phase 2 owns effective-window applicability. A second predicate would be a
+    // second source of truth about which rule governs a paycheck.
+    const offenders = stateFiles()
+      .filter((file) =>
+        /function\s+isEffective|effectiveTo\s*[<>]|effectiveFrom\s*[<>]/.test(code(file.text)),
+      )
+      .map((file) => file.rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it('creates none of the deferred Step 3 modules', () => {
+    // precedence, applicability evaluation, a coverage gate and orchestration
+    // all belong to later sub-steps.
+    const present = stateFiles().map((file) => file.rel);
+    for (const deferred of [
+      'lib/tax/state/resolver/resolver.ts',
+      'lib/tax/state/resolver/precedence.ts',
+      'lib/tax/state/resolver/applicability.ts',
+      'lib/tax/state/resolver/coverage-gate.ts',
+      'lib/tax/state/precedence.ts',
+      'lib/tax/state/effective-date.ts',
+      'lib/tax/state/effective-instant.ts',
+    ]) {
+      expect(present, `${deferred} belongs to a later step`).not.toContain(deferred);
+    }
+  });
+
+  it('adds no precedence ranking, caching or expression evaluation', () => {
+    const offenders = stateFiles()
+      .filter((file) =>
+        /\brank\(|\bprecedence\b|specificityVector|new Map\(\).*cache|\bcacheIdentity\b/i.test(
+          code(file.text),
+        ),
+      )
+      .map((file) => file.rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it('keeps the resolver projection free of money and identity fields', () => {
+    const projection = code(readFileSync(join(STATE, 'resolutionContext.ts'), 'utf8'));
+    for (const forbidden of [
+      'employeeCategory',
+      'reciprocityContext',
+      'localContext',
+      'employerJurisdiction',
+      'ruleDataVersion',
+      'PREVIEW',
+    ]) {
+      expect(projection, `${forbidden} must not appear`).not.toContain(forbidden);
+    }
+    // `wages`/`ytd` may be READ from the argument but must never be emitted.
+    expect(projection).not.toMatch(/^\s*wages:/m);
+    expect(projection).not.toMatch(/^\s*ytd:/m);
+  });
+
+  it('does not import or modify the Phase 2 provider', () => {
+    const offenders = stateFiles()
+      .filter((file) => /from '@\/lib\/rules\/repository'/.test(code(file.text)))
+      .map((file) => file.rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it('defines the capability vocabulary exactly once', () => {
+    // CapabilityCode aliases Step 2's StateCapability; a second list of the 13
+    // members would be two vocabularies drifting apart.
+    const offenders = stateFiles()
+      .filter((file) => !file.rel.endsWith('coverage/capabilities.ts'))
+      .filter((file) => /INCOME_TAX:\s*'INCOME_TAX'/.test(code(file.text)))
+      .map((file) => file.rel);
+    expect(offenders).toEqual([]);
+  });
+});
