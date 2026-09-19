@@ -354,3 +354,112 @@ describe('Step 3.1 scope — prohibited resolver architecture is absent', () => 
     expect(offenders).toEqual([]);
   });
 });
+
+describe('Step 3.2 scope — validation only, F-02 stays deferred', () => {
+  it('introduces no capability -> rule-key mapping', () => {
+    // The whole reason F-02 is deferred: deciding what a capability NEEDS
+    // requires a mapping nobody has approved yet. No file may import the rule
+    // key namespace to build one, however indirectly.
+    const offenders = stateFiles()
+      .filter((file) => file.rel.endsWith('resolutionContext.ts'))
+      .filter((file) =>
+        /StateRuleKey|from '\.\/ruleKeys'|'STATE\.[A-Z0-9_.]*'/.test(code(file.text)),
+      )
+      .map((file) => file.rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it('constructs no required-key list', () => {
+    const offenders = stateFiles()
+      .filter((file) => file.rel.endsWith('resolutionContext.ts'))
+      .filter((file) => /requiredKeys|REQUIRED_KEYS|requiredRuleKeys/i.test(code(file.text)))
+      .map((file) => file.rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it('produces no MISSING_REQUIRED_CONTEXT outcome — the symbol does not exist here', () => {
+    const validation = code(readFileSync(join(STATE, 'resolutionContext.ts'), 'utf8'));
+    expect(validation).not.toContain('MISSING_REQUIRED_CONTEXT');
+  });
+
+  it('applies no format/case/length/regex rule to a jurisdiction field', () => {
+    // Jurisdiction validation is structural-only (Amendment 2 / F-5): blank vs
+    // non-blank, nothing else. No RegExp may be applied to either field.
+    const validation = readFileSync(join(STATE, 'resolutionContext.ts'), 'utf8');
+    const jurisdictionSection =
+      /\/\/ ---- 3\. workJurisdiction[\s\S]*?\/\/ ---- 5\./.exec(validation)?.[0] ?? '';
+    expect(jurisdictionSection.length).toBeGreaterThan(0);
+    expect(jurisdictionSection).not.toMatch(/\/[^/\n]+\/\.test\(/);
+  });
+
+  it('validation applies no effective-date filtering', () => {
+    const validation = code(readFileSync(join(STATE, 'resolutionContext.ts'), 'utf8'));
+    expect(validation).not.toMatch(/effectiveFrom|effectiveTo|isEffectiveAt/);
+  });
+
+  it('performs no monetary arithmetic and touches no money type', () => {
+    const validation = code(readFileSync(join(STATE, 'resolutionContext.ts'), 'utf8'));
+    expect(validation).not.toMatch(/from '@\/lib\/core\/money'|\bMoney\b|\bDecimal\b/);
+  });
+
+  it('the validator is synchronous, so it cannot itself await a query', () => {
+    const validation = readFileSync(join(STATE, 'resolutionContext.ts'), 'utf8');
+    expect(validation).toContain('export function validateResolutionContext(');
+    expect(validation).not.toContain('export async function validateResolutionContext(');
+  });
+});
+
+describe('Amendment 3 scope — capabilitiesRequested is caller-supplied, F-02 stays deferred', () => {
+  it('projectResolutionContext requires the argument — no optional flag, no default value', () => {
+    const source = code(readFileSync(join(STATE, 'resolutionContext.ts'), 'utf8'));
+    const signature =
+      /export function projectResolutionContext\(([\s\S]*?)\):/.exec(source)?.[1] ?? '';
+    expect(signature.length).toBeGreaterThan(0);
+    // Neither `capabilitiesRequested?:` nor `capabilitiesRequested: ... = ...`.
+    expect(signature).not.toMatch(/capabilitiesRequested\s*\?/);
+    expect(signature).not.toMatch(/capabilitiesRequested\s*:[^,)]*=/);
+  });
+
+  it('does not read capabilitiesRequested from StateCalculationContext', () => {
+    // StateCalculationContext (Step 1, context.ts) must not grow a field this
+    // projection could read instead of taking the explicit argument.
+    const contextSource = code(readFileSync(join(STATE, 'context.ts'), 'utf8'));
+    expect(contextSource).not.toMatch(/capabilitiesRequested/);
+
+    const projectionSource = code(readFileSync(join(STATE, 'resolutionContext.ts'), 'utf8'));
+    expect(projectionSource).not.toMatch(/calcContext\.\w*[Cc]apabilit\w*/);
+  });
+
+  it('does not read capabilitiesRequested from CalculationInput', () => {
+    const inputSource = code(readFileSync(join(ROOT, 'lib/calculator/types/input.ts'), 'utf8'));
+    expect(inputSource).not.toMatch(/capabilitiesRequested/i);
+
+    const projectionSource = code(readFileSync(join(STATE, 'resolutionContext.ts'), 'utf8'));
+    expect(projectionSource).not.toMatch(/from '@\/lib\/calculator\/types\/input'/);
+  });
+
+  it('has no production path that manufactures an empty capabilitiesRequested itself', () => {
+    // The one place `new Set()`/`new Set<CapabilityCode>()` may appear with no
+    // argument is the deferred `wageTypesPresent` line — never the
+    // capabilitiesRequested line, which must copy the parameter instead.
+    const source = readFileSync(join(STATE, 'resolutionContext.ts'), 'utf8');
+    const capabilitiesLine = source
+      .split('\n')
+      .find((line) => /capabilitiesRequested:\s*new Set/.test(line));
+    expect(capabilitiesLine).toBeDefined();
+    expect(capabilitiesLine).toMatch(/new Set<CapabilityCode>\(capabilitiesRequested\)/);
+    expect(capabilitiesLine).not.toMatch(/new Set<CapabilityCode>\(\)/);
+  });
+
+  it('still introduces no capability -> rule-key mapping', () => {
+    // Re-asserted after Amendment 3: accepting an explicit request set must not
+    // have grown into resolving what that request needs.
+    const offenders = stateFiles()
+      .filter((file) => file.rel.endsWith('resolutionContext.ts'))
+      .filter((file) =>
+        /StateRuleKey|from '\.\/ruleKeys'|'STATE\.[A-Z0-9_.]*'/.test(code(file.text)),
+      )
+      .map((file) => file.rel);
+    expect(offenders).toEqual([]);
+  });
+});
