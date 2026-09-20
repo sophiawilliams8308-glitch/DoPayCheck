@@ -48,6 +48,8 @@ function calcContext(overrides: Partial<StateCalculationContext> = {}): StateCal
     residenceJurisdictionCode: TEST_RESIDENCE,
     residencyStatus: ResidencyStatus.NONRESIDENT,
     wages: { regular: '100', supplemental: '0' },
+    deductions: [],
+    taxabilityProfiles: {},
     ytd: stateYtdAssumedZero(),
     workRuleSet: ruleSet(),
     residenceRuleSet: null,

@@ -88,6 +88,8 @@ function context(overrides: Partial<StateCalculationContext> = {}): StateCalcula
     residenceJurisdictionCode: TEST_WORK,
     residencyStatus: ResidencyStatus.RESIDENT,
     wages: { regular: '100', supplemental: '0' },
+    deductions: [],
+    taxabilityProfiles: {},
     ytd: stateYtdAssumedZero(),
     workRuleSet: ruleSet(),
     residenceRuleSet: null,

@@ -134,10 +134,13 @@ describe('no executable admin-authored input', () => {
 });
 
 describe('boundaries', () => {
-  it('imports no database client or Prisma at this stage', () => {
-    // Step 1 is contracts only. The future state resolver is the one module
-    // that may reach for the database, and it does not exist yet.
+  it('imports no database client or Prisma, except the one intentional Step 3.5 seam', () => {
+    // Steps 1-3.4 are contracts/pure logic only. Step 3.5's candidate
+    // retrieval is the one module explicitly designed to reach the database
+    // (lib/tax/state/rules/candidateRetrieval.ts) — everything else in this
+    // tree must stay exactly as DB-free as it always was.
     const offenders = stateFiles()
+      .filter((file) => !file.rel.endsWith('rules/candidateRetrieval.ts'))
       .filter((file) => /from '@\/lib\/db\/|getPrisma|PrismaClient/.test(code(file.text)))
       .map((file) => file.rel);
     expect(offenders).toEqual([]);
@@ -461,5 +464,268 @@ describe('Amendment 3 scope — capabilitiesRequested is caller-supplied, F-02 s
       )
       .map((file) => file.rel);
     expect(offenders).toEqual([]);
+  });
+});
+
+describe('Step 3.3 scope — coverage gate only, F-02 stays deferred', () => {
+  it('introduces no capability -> rule-key mapping in the coverage gate', () => {
+    const offenders = stateFiles()
+      .filter((file) => file.rel.endsWith('coverageGate.ts'))
+      .filter((file) =>
+        /StateRuleKey|from '\.\/ruleKeys'|'STATE\.[A-Z0-9_.]*'/.test(code(file.text)),
+      )
+      .map((file) => file.rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it('imports no candidate-rule retrieval module (Step 3.4 does not exist yet)', () => {
+    const gate = code(readFileSync(join(STATE, 'coverageGate.ts'), 'utf8'));
+    expect(gate).not.toMatch(/retrieveCandidates|candidateRetrieval|from '\.\/rules\/retrieve/i);
+  });
+
+  it('the gate is synchronous, so it cannot itself await a candidate-rule query', () => {
+    const gate = readFileSync(join(STATE, 'coverageGate.ts'), 'utf8');
+    expect(gate).toContain('export function consultCoverage(');
+    expect(gate).not.toContain('export async function consultCoverage(');
+  });
+
+  it('does not build a second coverage model or a jurisdiction vocabulary', () => {
+    const gate = code(readFileSync(join(STATE, 'coverageGate.ts'), 'utf8'));
+    expect(gate).not.toMatch(/\bSTATES\s*[:=]\s*\[|'US-[A-Z]{2}'/);
+    // Reuses Step 2's matrix/cell lookup rather than a second data source.
+    expect(gate).toContain("from './coverage/coverage'");
+  });
+
+  it('performs no monetary arithmetic and touches no tax value', () => {
+    const gate = code(readFileSync(join(STATE, 'coverageGate.ts'), 'utf8'));
+    expect(gate).not.toMatch(/from '@\/lib\/core\/money'|\bMoney\b|\bDecimal\b/);
+    expect(gate).not.toMatch(/\b\d+\.\d+\b/);
+  });
+
+  it('never collapses the eight coverage statuses into one generic outcome', () => {
+    // Every status must reach its own switch branch — a `default:` here would
+    // let two different statuses silently share a fate.
+    const gate = readFileSync(join(STATE, 'coverageGate.ts'), 'utf8');
+    const consultCoverageBody =
+      /export function consultCoverage\([\s\S]*?\n\}/.exec(gate)?.[0] ?? '';
+    expect(consultCoverageBody.length).toBeGreaterThan(0);
+    expect(consultCoverageBody).not.toMatch(/^\s*default:/m);
+  });
+});
+
+describe('Step 3.4 scope — F-02 mapping only, no later-stage functionality', () => {
+  it('imports no database client or Prisma', () => {
+    const mapping = code(readFileSync(join(STATE, 'capabilityRuleKeys.ts'), 'utf8'));
+    expect(mapping).not.toMatch(/from '@\/lib\/db\/|getPrisma|PrismaClient|prisma/i);
+  });
+
+  it('does not import candidate retrieval or rule resolution (neither exists yet)', () => {
+    const mapping = code(readFileSync(join(STATE, 'capabilityRuleKeys.ts'), 'utf8'));
+    expect(mapping).not.toMatch(
+      /retrieveCandidates|candidateRetrieval|resolveRule|from '\.\/resolver/i,
+    );
+  });
+
+  it('performs no monetary arithmetic and touches no tax value', () => {
+    const mapping = code(readFileSync(join(STATE, 'capabilityRuleKeys.ts'), 'utf8'));
+    expect(mapping).not.toMatch(/from '@\/lib\/core\/money'|\bMoney\b|\bDecimal\b/);
+    expect(mapping).not.toMatch(/\b\d+\.\d+\b/);
+  });
+
+  it('does not import or reference the CoverageMatrix / coverage gate at all', () => {
+    // F-02 and the Coverage Gate are independent seams — this file must not
+    // reach into Step 3.3's module or its data.
+    const mapping = code(readFileSync(join(STATE, 'capabilityRuleKeys.ts'), 'utf8'));
+    expect(mapping).not.toMatch(/CoverageMatrix|findCoverageCell|consultCoverage|coverageGate/);
+  });
+
+  it('does not introduce a second coverage model', () => {
+    const mapping = code(readFileSync(join(STATE, 'capabilityRuleKeys.ts'), 'utf8'));
+    expect(mapping).not.toMatch(/CoverageStatus|CoverageCell|CoverageScenario/);
+  });
+
+  it('has no production path that returns an empty array for a known capability', () => {
+    // Every value in the canonical mapping must be a non-empty array literal.
+    const mapping = readFileSync(join(STATE, 'capabilityRuleKeys.ts'), 'utf8');
+    const mapBody = /CAPABILITY_RULE_KEYS[\s\S]*?\n {2}\}\);/.exec(mapping)?.[0] ?? '';
+    expect(mapBody.length).toBeGreaterThan(0);
+    expect(mapBody).not.toMatch(/Object\.freeze\(\[\]\)/);
+  });
+
+  it('Step 3.3 coverageGate.ts is unmodified in spirit — it still imports no rule-key namespace', () => {
+    // Re-asserted after Step 3.4 exists alongside it: adding F-02 must not
+    // have pulled coverageGate.ts into referencing it.
+    const gate = code(readFileSync(join(STATE, 'coverageGate.ts'), 'utf8'));
+    expect(gate).not.toMatch(/capabilityRuleKeys|CAPABILITY_RULE_KEYS|requiredRuleKeys/);
+  });
+});
+
+describe('Step 3.5 scope — candidate retrieval only, no resolution or calculation', () => {
+  const CANDIDATE_RETRIEVAL = join(STATE, 'rules/candidateRetrieval.ts');
+
+  it('performs no tax calculation and touches no tax value', () => {
+    const source = code(readFileSync(CANDIDATE_RETRIEVAL, 'utf8'));
+    expect(source).not.toMatch(/from '@\/lib\/core\/money'|\bMoney\b|\bDecimal\b/);
+    expect(source).not.toMatch(/\b\d+\.\d+\b/);
+  });
+
+  it('does not call the pure Phase 2 resolution decision (resolveApplicableRules)', () => {
+    // Candidate retrieval hands rows to a LATER stage; it must never itself
+    // decide RESOLVED/AMBIGUOUS/NOT_FOUND.
+    const source = code(readFileSync(CANDIDATE_RETRIEVAL, 'utf8'));
+    expect(source).not.toMatch(/resolveApplicableRules|ResolutionStatus/);
+  });
+
+  it('does not construct a ResolvedStateRuleSet or import the final state-rule-set module', () => {
+    const source = code(readFileSync(CANDIDATE_RETRIEVAL, 'utf8'));
+    expect(source).not.toMatch(/ResolvedStateRuleSet|freezeStateRuleSet|from '\.\/stateRuleSet'/);
+  });
+
+  it('does not duplicate the F-02 capability -> rule-key mapping', () => {
+    const source = code(readFileSync(CANDIDATE_RETRIEVAL, 'utf8'));
+    expect(source).not.toMatch(/CAPABILITY_RULE_KEYS|requiredRuleKeys|capabilityRuleKeys/);
+  });
+
+  it('does not import or reference the Step 3.3 coverage model', () => {
+    const source = code(readFileSync(CANDIDATE_RETRIEVAL, 'utf8'));
+    expect(source).not.toMatch(
+      /CoverageMatrix|CoverageStatus|CoverageCell|coverageGate|consultCoverage/,
+    );
+  });
+
+  it('never substitutes a fallback jurisdiction — no hardcoded jurisdiction code', () => {
+    const source = code(readFileSync(CANDIDATE_RETRIEVAL, 'utf8'));
+    expect(source).not.toMatch(/\bUS\b|'US-[A-Z]{2}'|DEFAULT_JURISDICTION|FALLBACK/);
+  });
+
+  it('does not silently swallow a database error (no empty-catch around the query)', () => {
+    const source = readFileSync(CANDIDATE_RETRIEVAL, 'utf8');
+    expect(source).not.toMatch(/catch\s*(\([^)]*\))?\s*\{\s*\}/);
+    expect(source).not.toMatch(/\.catch\(\s*\(\)\s*=>\s*(\[\]|null|undefined)\s*\)/);
+  });
+
+  it('performs at most one findMany call — narrowing happens in one query, not per key', () => {
+    const source = code(readFileSync(CANDIDATE_RETRIEVAL, 'utf8'));
+    const matches = source.match(/\.findMany\(/g) ?? [];
+    expect(matches.length).toBe(1);
+  });
+});
+
+describe('Step 3.6 scope — candidate resolution only, no retrieval or final assembly', () => {
+  const RESOLVE_CANDIDATES = join(STATE, 'rules/resolveCandidates.ts');
+
+  it('imports no database client or Prisma', () => {
+    const source = code(readFileSync(RESOLVE_CANDIDATES, 'utf8'));
+    expect(source).not.toMatch(/from '@\/lib\/db\/|getPrisma|PrismaClient/);
+  });
+
+  it('does not import the candidate-retrieval module for execution', () => {
+    // Step 3.6 consumes Step 3.5's OUTPUT TYPE only — it must never call
+    // retrieveCandidates() itself, which would blur the two seams.
+    const source = code(readFileSync(RESOLVE_CANDIDATES, 'utf8'));
+    expect(source).not.toMatch(/retrieveCandidates\(/);
+  });
+
+  it('does not import or reference the Step 3.3 coverage model', () => {
+    const source = code(readFileSync(RESOLVE_CANDIDATES, 'utf8'));
+    expect(source).not.toMatch(
+      /CoverageMatrix|CoverageStatus|CoverageCell|coverageGate|consultCoverage/,
+    );
+  });
+
+  it('does not import or duplicate the F-02 capability -> rule-key mapping', () => {
+    const source = code(readFileSync(RESOLVE_CANDIDATES, 'utf8'));
+    expect(source).not.toMatch(/CAPABILITY_RULE_KEYS|requiredRuleKeys|capabilityRuleKeys/);
+  });
+
+  it('does not construct or freeze the final ResolvedStateRuleSet', () => {
+    const source = code(readFileSync(RESOLVE_CANDIDATES, 'utf8'));
+    expect(source).not.toMatch(
+      /ResolvedStateRuleSet|freezeStateRuleSet|\bstateRule\(|from '\.\/stateRuleSet'/,
+    );
+  });
+
+  it('performs no tax calculation and touches no tax value', () => {
+    const source = code(readFileSync(RESOLVE_CANDIDATES, 'utf8'));
+    expect(source).not.toMatch(/from '@\/lib\/core\/money'|\bMoney\b|\bDecimal\b/);
+    expect(source).not.toMatch(/\b\d+\.\d+\b/);
+  });
+
+  it('reimplements no selection heuristic — calls the generic resolver exactly once per group', () => {
+    const source = code(readFileSync(RESOLVE_CANDIDATES, 'utf8'));
+    const matches = source.match(/resolveApplicableRules\(/g) ?? [];
+    expect(matches.length).toBe(1);
+    expect(source).not.toMatch(/\.sort\(|newest|oldest|highestVersion|latestVersion/i);
+  });
+
+  it('is synchronous — no async function, no Promise-returning export', () => {
+    const source = readFileSync(RESOLVE_CANDIDATES, 'utf8');
+    expect(source).toContain('export function resolveCandidates(');
+    expect(source).not.toContain('export async function resolveCandidates(');
+  });
+});
+
+describe('Step 3.7 scope — final assembly only, no database access or re-resolution', () => {
+  const ASSEMBLE = join(STATE, 'rules/assembleStateRuleSet.ts');
+
+  it('imports no database client, Prisma, or repository', () => {
+    const source = code(readFileSync(ASSEMBLE, 'utf8'));
+    const importLines = source
+      .split('\n')
+      .filter((line) => /^import\b/.test(line.trim()))
+      .join('\n');
+    expect(importLines).not.toMatch(/getPrisma|PrismaClient|from '@\/lib\/db\//);
+    expect(importLines).not.toMatch(/from '@\/lib\/jurisdictions\/repository'/);
+  });
+
+  it('does not import the candidate-retrieval module, type-only or otherwise', () => {
+    const source = code(readFileSync(ASSEMBLE, 'utf8'));
+    const importLines = source
+      .split('\n')
+      .filter((line) => /^import\b/.test(line.trim()))
+      .join('\n');
+    expect(importLines).not.toMatch(/candidateRetrieval/);
+  });
+
+  it('does not import or call the generic resolver — resolution stays Step 3.6’s job', () => {
+    const source = code(readFileSync(ASSEMBLE, 'utf8'));
+    expect(source).not.toMatch(/resolveApplicableRules|from '@\/lib\/rules\/resolution'/);
+  });
+
+  it('does not import or duplicate the F-02 capability -> rule-key mapping', () => {
+    const source = code(readFileSync(ASSEMBLE, 'utf8'));
+    expect(source).not.toMatch(/CAPABILITY_RULE_KEYS|requiredRuleKeys|capabilityRuleKeys/);
+  });
+
+  it('does not import or reference the Step 3.3 coverage model', () => {
+    const source = code(readFileSync(ASSEMBLE, 'utf8'));
+    expect(source).not.toMatch(
+      /CoverageMatrix|CoverageStatus|CoverageCell|coverageGate|consultCoverage/,
+    );
+  });
+
+  it('performs no tax calculation and touches no tax value', () => {
+    const source = code(readFileSync(ASSEMBLE, 'utf8'));
+    expect(source).not.toMatch(/from '@\/lib\/core\/money'|\bMoney\b|\bDecimal\b/);
+    expect(source).not.toMatch(/\b\d+\.\d+\b/);
+  });
+
+  it('uses the canonical freezeStateRuleSet constructor rather than a parallel one', () => {
+    const source = code(readFileSync(ASSEMBLE, 'utf8'));
+    expect(source).toMatch(/from '\.\/stateRuleSet'/);
+    expect(source).toContain('freezeStateRuleSet(');
+    const matches = source.match(/freezeStateRuleSet\(/g) ?? [];
+    expect(matches.length).toBe(1);
+  });
+
+  it('does not arbitrate ambiguity — no selection heuristic over multiple candidates', () => {
+    const source = code(readFileSync(ASSEMBLE, 'utf8'));
+    expect(source).not.toMatch(/\.sort\(|newest|oldest|highestVersion|latestVersion/i);
+  });
+
+  it('is synchronous — no async function, no Promise-returning export', () => {
+    const source = readFileSync(ASSEMBLE, 'utf8');
+    expect(source).toContain('export function assembleStateRuleSet(');
+    expect(source).not.toContain('export async function assembleStateRuleSet(');
   });
 });

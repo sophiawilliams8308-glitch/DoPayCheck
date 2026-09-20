@@ -1,8 +1,10 @@
+import type { StateTaxabilityProfileDetail } from './rules/detailSchemas';
 import type { ResolvedStateRuleSet } from './rules/stateRuleSet';
 import {
   SUPPORTED_WORK_JURISDICTION_COUNT,
   type DecimalString,
   type ResidencyStatus,
+  type StateDeductionLine,
   type StateWorkJurisdiction,
   type StateYtd,
 } from './types';
@@ -67,6 +69,26 @@ export interface StateCalculationContext {
     readonly regular: DecimalString;
     readonly supplemental: DecimalString;
   };
+
+  /**
+   * Pre-tax deduction/benefit lines for this pay period — Task 4B, Option A.
+   *
+   * Required, not optional; an empty array is the valid representation of
+   * "no deductions this period", not an omission.
+   */
+  readonly deductions: readonly StateDeductionLine[];
+  /**
+   * One taxability profile per distinct `deductionTypeKey` present in
+   * `deductions`, keyed by that same string.
+   *
+   * Supplied directly by whatever builds this context — NOT resolved via
+   * `StateRuleKey.TAXABILITY_PROFILE`/the candidate-retrieval/resolution/
+   * assembly pipeline, which remains unchanged and resolves at most one
+   * `TAXABILITY_PROFILE` row per jurisdiction. Where these values actually
+   * come from at runtime is intentionally not decided by this field: see
+   * the Task 4B contract-lock report.
+   */
+  readonly taxabilityProfiles: Readonly<Record<string, StateTaxabilityProfileDetail>>;
 
   /** YTD EXCLUDING the current pay period. */
   readonly ytd: StateYtd;

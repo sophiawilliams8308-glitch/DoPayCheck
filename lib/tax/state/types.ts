@@ -131,6 +131,22 @@ export interface StateYtd {
  */
 export type StateWageBuckets = Readonly<Record<StateBucket, DecimalString | null>>;
 
+/**
+ * One pre-tax deduction/benefit line for a pay period, under the
+ * context-driven taxability architecture (Task 4B, Option A).
+ *
+ * Kept to exactly the two fields the wage-bucket derivation needs.
+ * `amount` stays a `DecimalString` at this boundary, matching every other
+ * amount field on `StateCalculationContext` (`wages`, `StateYtd`) — never
+ * `Money` here; a pure calculation module converts it once, at its own
+ * boundary, exactly as `applyStateWageBase` already does for wages.
+ */
+export interface StateDeductionLine {
+  /** Matches a key in `StateCalculationContext.taxabilityProfiles`. */
+  readonly deductionTypeKey: string;
+  readonly amount: DecimalString;
+}
+
 /** One state amount, or an explained absence. NEVER defaulted to "0". */
 export interface StateAmount {
   readonly code: string;
