@@ -29,6 +29,7 @@ import type { FederalCalculationResult } from '@/lib/tax/federal/types';
 import { CalculationStatus, combineStatuses } from './types/status';
 import { validateInput } from './validation/input-schema';
 import { runFederalEngine, type FederalOptions } from './federal-bridge';
+import type { StateOptions } from './state-bridge';
 import { periodsPerYear as resolvePeriodsPerYear } from './pipeline/pay-frequency';
 
 /**
@@ -70,6 +71,14 @@ export interface CalculationOptions {
    * behaves exactly as it did in Phase 3.
    */
   readonly federal?: FederalOptions;
+  /**
+   * Phase 5 state engine, opt-in — contract only (Task 4G/4H).
+   *
+   * Supplying this does not itself trigger any state calculation: nothing in this pipeline
+   * reads `options.state` yet. It exists so a future state bridge/orchestrator has a defined
+   * place to receive an already-resolved state rule set and taxability profiles.
+   */
+  readonly state?: StateOptions;
 }
 
 function toDeductionBreakdown(items: readonly DeductionResult[], total: Money): DeductionBreakdown {
