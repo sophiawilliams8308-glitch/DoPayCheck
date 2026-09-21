@@ -6,6 +6,7 @@ import type {
   StateAmountByFilingStatusDetail,
   StateBracketTableDetail,
   StateFormulaStepsDetail,
+  StateRateDetail,
   StateScalarAmountDetail,
 } from './detailSchemas';
 import {
@@ -21,15 +22,17 @@ import type { ResolvedStateRuleSet } from './stateRuleSet';
 
 /**
  * State withholding formula interpreter — Task 4O-3A, extended by Tasks
- * 4O-5 and 4O-6R6.
+ * 4O-5, 4O-6R6, and 4O-6R12.
  *
  * ===========================================================================
- * IMPLEMENTS FIVE OPERATIONS: THE THREE TASK 4O-2 CONTRACT-LOCKED ONES
+ * IMPLEMENTS SIX OPERATIONS: THE THREE TASK 4O-2 CONTRACT-LOCKED ONES
  * (`SUBTRACT_STANDARD_DEDUCTION`, `FLOOR_AT_ZERO`, `APPLY_BRACKETS`), PLUS
  * `SUBTRACT_EXEMPTIONS`'S PERSONAL-EXEMPTION PATH ONLY (Task 4O-4/4O-5),
  * PLUS `SUBTRACT_AMOUNT` (Task 4O-6R3/4O-6R4/4O-6R5/4O-6R6) — a GENERIC
  * SCALAR AMOUNT PRIMITIVE with no built-in real-world tax meaning: it
- * subtracts whatever `SCALAR_AMOUNT`-shaped rule its `operandRef` names.
+ * subtracts whatever `SCALAR_AMOUNT`-shaped rule its `operandRef` names —
+ * PLUS `APPLY_FLAT_RATE` (Task 4O-6R9/4O-6R10/4O-6R11/4O-6R12), generic over
+ * any `RATE`-shaped `StateRuleKey`.
  *
  * `SUBTRACT_EXEMPTIONS` supports ONLY `operandRef ===
  * StateRuleKey.PIT_PERSONAL_EXEMPTION`. The dependent-exemption path
@@ -37,12 +40,12 @@ import type { ResolvedStateRuleSet } from './stateRuleSet';
  * other operandRef, to `SUBTRACT_EXEMPTIONS` fails `RULE_DETAIL_INVALID`
  * rather than being tolerated or treated as merely unsupported.
  *
- * The remaining seven operations (`SUBTRACT_ALLOWANCES`, `ADD_AMOUNT`,
- * `APPLY_FLAT_RATE`, `APPLY_PERCENTAGE_OF`, `ANNUALIZE`, `DEANNUALIZE`,
- * `ROUND`) remain contractually unresolved (Task 4O-2 §3/§8) and are never
- * silently executed — encountering one reports `METHOD_NOT_IMPLEMENTED`,
- * mirroring the exact, already-established meaning of that reason elsewhere
- * in the project
+ * The remaining six operations (`SUBTRACT_ALLOWANCES`, `ADD_AMOUNT`,
+ * `APPLY_PERCENTAGE_OF`, `ANNUALIZE`, `DEANNUALIZE`, `ROUND`) remain
+ * contractually unresolved (Task 4O-2 §3/§8) and are never silently
+ * executed — encountering one reports `METHOD_NOT_IMPLEMENTED`, mirroring
+ * the exact, already-established meaning of that reason elsewhere in the
+ * project
  * (`lib/calculator/pipeline/tax-stages.ts`'s `evaluateComponent()`: "the
  * calculation methodology for this category is delivered in a later phase").
  *
@@ -389,17 +392,109 @@ function subtractAmount(
 }
 
 /**
+ * `APPLY_FLAT_RATE` — Task 4O-6R9/4O-6R10/4O-6R11 contract-locked, GENERIC
+ * OVER `RATE`-SHAPED `StateRuleKey`s.
+ *
+ * `operandRef` is REQUIRED and validated against the same `VALID_RULE_KEYS`
+ * membership set `applyBrackets()`/`subtractAmount()` already use — it is
+ * NOT hard-coded to `StateRuleKey.PIT_FLAT_RATE`. The referenced rule must
+ * resolve to `RATE` (`stateRateDetailSchema`) — any other resolved shape
+ * fails `RULE_DETAIL_INVALID`, exactly mirroring `applyBrackets()`'s own
+ * `detail.shape !== 'BRACKET_TABLE'` check. `PIT_FLAT_RATE` is currently the
+ * only plausible production operand, but is never required to be the exact
+ * key (Task 4O-6R10 found no real formula example proving that exact
+ * requirement).
+ *
+ * `applicability`/`appliesTo` are OWNER-LOCKED DECISIONS (Task 4O-6R11), not
+ * pre-existing repository behavior: no other `RATE` consumer in this engine
+ * (or federal's) has ever consulted either field before. `NOT_APPLICABLE`
+ * and an `EMPLOYER`-tagged rate both report `SCENARIO_UNSUPPORTED` — never
+ * silently zeroed, never `COMPONENT_NOT_STATED`, and the accumulator is
+ * never mutated in either case.
+ *
+ * Rate normalization reuses the existing, unmodified `readRate()` — the
+ * same helper `applyBrackets()` already uses for a bracket row's `rate`/
+ * `unit` pair, here applied to a top-level `RATE` detail's own `rate`/
+ * `unit` instead. No second `PERCENT`→`DECIMAL_FRACTION` conversion path is
+ * introduced. No `ANNUAL`/`PER_PERIOD` semantics apply to this schema at
+ * all, and none are added here.
+ */
+function applyFlatRate(
+  ruleSet: ResolvedStateRuleSet,
+  operandRef: string | null,
+  runningValue: Money,
+): Read<Money> {
+  if (operandRef === null) {
+    return readFail(
+      invalidDetail('APPLY_FLAT_RATE requires a non-null operandRef naming a StateRuleKey'),
+    );
+  }
+  if (!VALID_RULE_KEYS.has(operandRef)) {
+    return readFail(
+      invalidDetail(
+        `APPLY_FLAT_RATE operandRef "${operandRef}" does not name a known StateRuleKey`,
+      ),
+    );
+  }
+  const rateRuleKey = operandRef as StateRuleKey;
+
+  const found = readDetail(ruleSet, rateRuleKey);
+  if (!found.ok) {
+    return readFail(found.problem);
+  }
+
+  const detail = found.value.detail as { shape: string };
+  if (detail.shape !== 'RATE') {
+    return readFail(
+      invalidDetail(
+        `APPLY_FLAT_RATE operandRef "${operandRef}" resolved a "${detail.shape}" rule, not a RATE`,
+      ),
+    );
+  }
+  const rateDetail = found.value.detail as StateRateDetail;
+
+  if (rateDetail.applicability === 'NOT_APPLICABLE') {
+    return readFail(
+      stateUnavailable(
+        StateReason.SCENARIO_UNSUPPORTED,
+        `APPLY_FLAT_RATE operandRef "${operandRef}" is NOT_APPLICABLE in this jurisdiction; no ` +
+          'rate is assumed',
+        rateRuleKey,
+      ),
+    );
+  }
+
+  if (rateDetail.appliesTo === 'EMPLOYER') {
+    return readFail(
+      stateUnavailable(
+        StateReason.SCENARIO_UNSUPPORTED,
+        `APPLY_FLAT_RATE operandRef "${operandRef}" applies to EMPLOYER, not EMPLOYEE; this ` +
+          'withholding formula does not calculate employer income tax',
+        rateRuleKey,
+      ),
+    );
+  }
+
+  const rate = readRate(rateDetail.rate, rateDetail.unit, rateRuleKey, 'rate');
+  if (!rate.ok) {
+    return readFail(rate.problem);
+  }
+
+  return readOk(multiply(runningValue, rate.value));
+}
+
+/**
  * Runs a `WITHHOLDING_FORMULA`'s steps, in ascending `ordinal` order, over a
  * single running accumulator, starting from `initialValue`.
  *
  * `SUBTRACT_STANDARD_DEDUCTION`, `FLOOR_AT_ZERO`, `APPLY_BRACKETS`,
- * `SUBTRACT_EXEMPTIONS` (personal-exemption path only), and `SUBTRACT_AMOUNT`
- * are implemented. Any other operation — including `SUBTRACT_EXEMPTIONS`
- * with an operandRef other than `PIT_PERSONAL_EXEMPTION`, or
- * `SUBTRACT_AMOUNT` with an invalid operandRef — reports
- * `METHOD_NOT_IMPLEMENTED` or `RULE_DETAIL_INVALID` respectively, rather
- * than being silently skipped or executed. Duplicate ordinals are never
- * silently ordered — they report
+ * `SUBTRACT_EXEMPTIONS` (personal-exemption path only), `SUBTRACT_AMOUNT`,
+ * and `APPLY_FLAT_RATE` are implemented. Any other operation — including
+ * `SUBTRACT_EXEMPTIONS` with an operandRef other than
+ * `PIT_PERSONAL_EXEMPTION`, or `SUBTRACT_AMOUNT`/`APPLY_FLAT_RATE` with an
+ * invalid operandRef — reports `METHOD_NOT_IMPLEMENTED` or
+ * `RULE_DETAIL_INVALID` respectively, rather than being silently skipped or
+ * executed. Duplicate ordinals are never silently ordered — they report
  * `RULE_CONFLICT`, mirroring `selectStateWithholdingTableRow()`'s identical
  * treatment of ambiguous, contradictory rule data (Task 4N-R).
  *
@@ -452,6 +547,12 @@ export function runStateWithholdingFormula(
       }
       case 'SUBTRACT_AMOUNT': {
         const result = subtractAmount(ruleSet, step.operandRef, value);
+        if (!result.ok) return result;
+        value = result.value;
+        break;
+      }
+      case 'APPLY_FLAT_RATE': {
+        const result = applyFlatRate(ruleSet, step.operandRef, value);
         if (!result.ok) return result;
         value = result.value;
         break;
