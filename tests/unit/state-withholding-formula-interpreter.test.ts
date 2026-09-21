@@ -19,9 +19,13 @@ import type { StateFormulaStepsDetail } from '@/lib/tax/state/rules/detailSchema
  * ===========================================================================
  * SCOPE NOTE.
  *
- * Only the three fully contract-locked operations are exercised here —
+ * This file covers the three Task 4O-2 contract-locked operations —
  * `SUBTRACT_STANDARD_DEDUCTION`, `FLOOR_AT_ZERO`, `APPLY_BRACKETS`. The
- * remaining nine operations are asserted to report `METHOD_NOT_IMPLEMENTED`
+ * personal-exemption path of `SUBTRACT_EXEMPTIONS` (Task 4O-4/4O-5) has its
+ * own dedicated test file,
+ * `state-withholding-formula-subtract-exemptions.test.ts`, and is therefore
+ * excluded from this file's "unsupported operation" list below. The
+ * remaining eight operations are asserted to report `METHOD_NOT_IMPLEMENTED`
  * rather than silently executing — their own semantics are NOT locked, and
  * these tests do not attempt to pin down `PER_PERIOD` conversion, allowance
  * counts, state->federal filing-status mapping, `ANNUALIZE`/`DEANNUALIZE`
@@ -504,7 +508,6 @@ describe('multiple formula steps', () => {
 
 describe('unsupported operations do not silently execute', () => {
   const unsupported = [
-    'SUBTRACT_EXEMPTIONS',
     'SUBTRACT_ALLOWANCES',
     'SUBTRACT_AMOUNT',
     'ADD_AMOUNT',
