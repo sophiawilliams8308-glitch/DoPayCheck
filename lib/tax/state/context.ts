@@ -1,5 +1,6 @@
 import type { StateTaxabilityProfileDetail } from './rules/detailSchemas';
 import type { ResolvedStateRuleSet } from './rules/stateRuleSet';
+import type { StateRuleKey } from './ruleKeys';
 import {
   SUPPORTED_WORK_JURISDICTION_COUNT,
   type DecimalString,
@@ -99,6 +100,24 @@ export interface StateCalculationContext {
   readonly residenceRuleSet: ResolvedStateRuleSet | null;
 
   readonly elections: Readonly<Record<string, StateElections>>;
+  /**
+   * Allowance counts for `SUBTRACT_ALLOWANCES` — Task 4O-6R14/4O-6R15/4O-6R16.
+   *
+   * Keyed by the exact `StateRuleKey` a `WITHHOLDING_FORMULA` step's
+   * `operandRef` names (the rule whose `AMOUNT_PER_ALLOWANCE` detail the
+   * count belongs to) — never by `allowanceType`, and never a single
+   * formula-wide scalar (Task 4O-6R15 §6 locked this matching invariant).
+   * State-native only: never derived from `federal.w4.pre2020Allowances`,
+   * filing status, dependents, or exemptions. Required, not optional — an
+   * empty object is the valid representation of "no allowance counts were
+   * supplied," matching this context's existing convention for
+   * `taxabilityProfiles`/`deductions`. A key absent from this map is
+   * indistinguishable, to a future consumer, from an explicit "not stated"
+   * — both are surfaced as `COMPONENT_NOT_STATED` at the point a
+   * `SUBTRACT_ALLOWANCES` step actually needs the value (not implemented
+   * yet; this field is infrastructure only).
+   */
+  readonly allowanceCounts: Readonly<Partial<Record<StateRuleKey, number>>>;
   readonly employer: StateEmployerProfile;
   /** True when the employee has filed the certificate a reciprocity agreement requires. */
   readonly reciprocityCertificateFiled: boolean;

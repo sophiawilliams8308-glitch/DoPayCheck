@@ -94,6 +94,7 @@ function context(overrides: Partial<StateCalculationContext> = {}): StateCalcula
     workRuleSet: ruleSet(),
     residenceRuleSet: null,
     elections: {},
+    allowanceCounts: {},
     employer: {},
     reciprocityCertificateFiled: false,
     includeEmployerTaxes: true,

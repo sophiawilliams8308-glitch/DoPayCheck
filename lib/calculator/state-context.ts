@@ -5,6 +5,7 @@ import {
   type StateElections,
   type StateEmployerProfile,
 } from '@/lib/tax/state/context';
+import type { StateRuleKey } from '@/lib/tax/state/ruleKeys';
 import type { ResidencyStatus } from '@/lib/tax/state/types';
 
 import { toStateDeductions, type StateOptions } from './state-bridge';
@@ -108,6 +109,31 @@ function mapElections(
   );
 }
 
+/**
+ * Maps `StateInput.allowanceCounts`'s free-string keys onto
+ * `StateCalculationContext.allowanceCounts`'s `StateRuleKey`-keyed shape
+ * (Task 4O-6R16).
+ *
+ * A pure passthrough of keys and values, exactly as `mapElections()` never
+ * validates `formCode`/`fieldKey` against a known registry: this function
+ * does not check that a supplied key is actually a member of `StateRuleKey`
+ * (no `isStateRuleKey()` call), and does not drop or reject an unrecognized
+ * key. Validating a `StateRuleKey`'s existence is `readDetail()`'s and
+ * `VALID_RULE_KEYS`'s job, at the point a future `SUBTRACT_ALLOWANCES`
+ * handler actually resolves one — duplicating that check here would be a
+ * second, independent membership check drifting out of sync with the first.
+ * The cast to `Partial<Record<StateRuleKey, number>>` documents the
+ * project's own intended key semantics; it does not itself enforce them.
+ */
+function mapAllowanceCounts(
+  allowanceCounts: Readonly<Record<string, number>> | undefined,
+): Readonly<Partial<Record<StateRuleKey, number>>> {
+  if (allowanceCounts === undefined) {
+    return {};
+  }
+  return allowanceCounts as Readonly<Partial<Record<StateRuleKey, number>>>;
+}
+
 function mapEmployer(state: StateInput | undefined): StateEmployerProfile {
   return {
     ...(state?.employerEmployeeCount !== undefined
@@ -201,6 +227,7 @@ export function buildStateCalculationContext(
     residenceRuleSet: null,
 
     elections: mapElections(input.state?.stateElections),
+    allowanceCounts: mapAllowanceCounts(input.state?.allowanceCounts),
     employer: mapEmployer(input.state),
     reciprocityCertificateFiled: input.state?.reciprocityCertificateFiled ?? false,
     includeEmployerTaxes: true,

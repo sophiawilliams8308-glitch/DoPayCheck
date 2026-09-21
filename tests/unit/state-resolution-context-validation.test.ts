@@ -56,6 +56,7 @@ function calcContext(overrides: Partial<StateCalculationContext> = {}): StateCal
     elections: {
       [TEST_WORK]: { formCode: 'SYNTHETIC-FORM', filingStatus: 'SYNTHETIC_STATUS', values: [] },
     },
+    allowanceCounts: {},
     employer: {},
     reciprocityCertificateFiled: false,
     includeEmployerTaxes: true,

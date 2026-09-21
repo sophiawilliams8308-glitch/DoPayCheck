@@ -226,6 +226,18 @@ export interface StateInput {
   readonly residencyStatus?: ResidencyStatusKey;
   /** Per-jurisdiction elections, keyed by jurisdiction code. */
   readonly stateElections?: Readonly<Record<string, StateElectionsInput>>;
+  /**
+   * Allowance counts for `SUBTRACT_ALLOWANCES` (Task 4O-6R14/4O-6R15/4O-6R16).
+   *
+   * Keyed by the exact state rule key an allowance-value rule is resolved
+   * under (e.g. `STATE.WITHHOLDING.ALLOWANCE_VALUE`) — never by allowance
+   * type, and never one global count for the whole formula. A plain string
+   * key here, not the internal `StateRuleKey` enum: this input boundary
+   * never imports internal tax-engine domain types, matching
+   * `StateElectionsInput.formCode`'s own convention. State-native only —
+   * never derived from `w4.pre2020Allowances`.
+   */
+  readonly allowanceCounts?: Readonly<Record<string, number>>;
   /** Drives employer-size thresholds in a state programme descriptor. */
   readonly employerEmployeeCount?: number;
   /** The employer's experience-rated SUTA rate — employer-specific, never assumed. */

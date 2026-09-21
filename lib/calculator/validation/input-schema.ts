@@ -168,6 +168,8 @@ const stateInputSchema = z.object({
   residenceState: z.string().trim().min(1).optional(),
   residencyStatus: z.enum(['RESIDENT', 'NONRESIDENT', 'PART_YEAR_RESIDENT']).optional(),
   stateElections: z.record(z.string().trim().min(1), stateElectionsSchema).optional(),
+  /** Non-negative integer only — no coercion, no rounding, no default. */
+  allowanceCounts: z.record(z.string().trim().min(1), z.number().int().min(0)).optional(),
   employerEmployeeCount: z.number().int().min(0).optional(),
   employerSutaRate: nonNegativeDecimal.optional(),
   employerPlanElection: z.boolean().optional(),

@@ -96,6 +96,7 @@ describe('state block is additive and optional', () => {
             ],
           },
         },
+        allowanceCounts: { 'STATE.WITHHOLDING.ALLOWANCE_VALUE': 2 },
         employerEmployeeCount: 10,
         employerSutaRate: '1',
         employerPlanElection: true,
@@ -130,6 +131,53 @@ describe('state block is additive and optional', () => {
   it('rejects a floating-point SUTA rate', () => {
     const result = validateInput({ ...legacyInput, state: { employerSutaRate: 0.034 } });
     expect(result.valid).toBe(false);
+  });
+
+  describe('allowanceCounts (Task 4O-6R16)', () => {
+    it('accepts a zero count', () => {
+      const result = validateInput({
+        ...legacyInput,
+        state: { allowanceCounts: { 'STATE.WITHHOLDING.ALLOWANCE_VALUE': 0 } },
+      });
+      expect(result.valid).toBe(true);
+    });
+
+    it('accepts a positive integer count', () => {
+      const result = validateInput({
+        ...legacyInput,
+        state: { allowanceCounts: { 'STATE.WITHHOLDING.ALLOWANCE_VALUE': 3 } },
+      });
+      expect(result.valid).toBe(true);
+    });
+
+    it('rejects a negative count', () => {
+      const result = validateInput({
+        ...legacyInput,
+        state: { allowanceCounts: { 'STATE.WITHHOLDING.ALLOWANCE_VALUE': -1 } },
+      });
+      expect(result.valid).toBe(false);
+    });
+
+    it('rejects a fractional count', () => {
+      const result = validateInput({
+        ...legacyInput,
+        state: { allowanceCounts: { 'STATE.WITHHOLDING.ALLOWANCE_VALUE': 1.5 } },
+      });
+      expect(result.valid).toBe(false);
+    });
+
+    it('accepts multiple distinct keyed counts', () => {
+      const result = validateInput({
+        ...legacyInput,
+        state: {
+          allowanceCounts: {
+            'STATE.WITHHOLDING.ALLOWANCE_VALUE': 1,
+            'SYNTHETIC.OTHER.ALLOWANCE_VALUE': 4,
+          },
+        },
+      });
+      expect(result.valid).toBe(true);
+    });
   });
 
   it('supplying a state block does not change the calculated result', () => {

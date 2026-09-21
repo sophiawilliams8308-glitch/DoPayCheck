@@ -156,6 +156,83 @@ describe('buildStateCalculationContext — taxability profiles', () => {
   });
 });
 
+describe('buildStateCalculationContext — allowance counts (Task 4O-6R16)', () => {
+  it('normalizes an omitted allowanceCounts map to {}, never undefined', () => {
+    const context = buildStateCalculationContext(baseInput(), '2000', '0', [], baseOptions());
+    expect(context.allowanceCounts).toEqual({});
+  });
+
+  it('carries a supplied allowanceCounts map through exactly, keyed by rule key', () => {
+    const input = baseInput({
+      state: {
+        workState: TEST_WORK,
+        residencyStatus: ResidencyStatus.RESIDENT,
+        allowanceCounts: { [StateRuleKey.WITHHOLDING_ALLOWANCE_VALUE]: 2 },
+      },
+    });
+    const context = buildStateCalculationContext(input, '2000', '0', [], baseOptions());
+    expect(context.allowanceCounts).toEqual({ [StateRuleKey.WITHHOLDING_ALLOWANCE_VALUE]: 2 });
+  });
+
+  it('preserves multiple distinct keyed counts without conflating them', () => {
+    const input = baseInput({
+      state: {
+        workState: TEST_WORK,
+        residencyStatus: ResidencyStatus.RESIDENT,
+        allowanceCounts: {
+          [StateRuleKey.WITHHOLDING_ALLOWANCE_VALUE]: 1,
+          [StateRuleKey.PIT_FLAT_RATE]: 4,
+        },
+      },
+    });
+    const context = buildStateCalculationContext(input, '2000', '0', [], baseOptions());
+    expect(context.allowanceCounts).toEqual({
+      [StateRuleKey.WITHHOLDING_ALLOWANCE_VALUE]: 1,
+      [StateRuleKey.PIT_FLAT_RATE]: 4,
+    });
+  });
+
+  it('does not substitute one rule key’s count for an unrelated key', () => {
+    const input = baseInput({
+      state: {
+        workState: TEST_WORK,
+        residencyStatus: ResidencyStatus.RESIDENT,
+        allowanceCounts: { [StateRuleKey.WITHHOLDING_ALLOWANCE_VALUE]: 5 },
+      },
+    });
+    const context = buildStateCalculationContext(input, '2000', '0', [], baseOptions());
+    expect(context.allowanceCounts[StateRuleKey.PIT_FLAT_RATE]).toBeUndefined();
+    expect(context.allowanceCounts[StateRuleKey.WITHHOLDING_ALLOWANCE_VALUE]).toBe(5);
+  });
+
+  it('preserves a zero count exactly, not as an absent key', () => {
+    const input = baseInput({
+      state: {
+        workState: TEST_WORK,
+        residencyStatus: ResidencyStatus.RESIDENT,
+        allowanceCounts: { [StateRuleKey.WITHHOLDING_ALLOWANCE_VALUE]: 0 },
+      },
+    });
+    const context = buildStateCalculationContext(input, '2000', '0', [], baseOptions());
+    expect(context.allowanceCounts[StateRuleKey.WITHHOLDING_ALLOWANCE_VALUE]).toBe(0);
+  });
+
+  it('never reads federal.w4.pre2020Allowances — state and federal allowance counts stay isolated', async () => {
+    const fs = await import('node:fs');
+    const stripComments = (source: string): string =>
+      source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    const contextSource = stripComments(
+      fs.readFileSync(new URL('../../lib/calculator/state-context.ts', import.meta.url), 'utf8'),
+    );
+    const contextTypeSource = stripComments(
+      fs.readFileSync(new URL('../../lib/tax/state/context.ts', import.meta.url), 'utf8'),
+    );
+    expect(contextSource).not.toMatch(/pre2020Allowances/);
+    expect(contextTypeSource).not.toMatch(/pre2020Allowances/);
+  });
+});
+
 describe('buildStateCalculationContext — deduction transformation', () => {
   it('matches toStateDeductions(deductionResults) exactly', () => {
     const results = [

@@ -70,6 +70,7 @@ function context(overrides: Partial<StateCalculationContext> = {}): StateCalcula
         values: [{ fieldKey: 'extra', value: '10', unit: 'PER_PERIOD' }],
       },
     },
+    allowanceCounts: {},
     employer: { employeeCount: 10 },
     reciprocityCertificateFiled: true,
     includeEmployerTaxes: true,
@@ -353,8 +354,10 @@ describe('StateCalculationContext is unchanged', () => {
   it('still carries its Step 1 top-level fields, plus Task 4B/4C’s additive taxability fields', () => {
     // The projection is additive: Step 1's contract must not have been narrowed
     // or renamed to make it convenient. `deductions`/`taxabilityProfiles` were
-    // added by Task 4C, implementing the locked Task 4B contract (Option A) —
-    // an approved addition, not a narrowing or rename of anything above.
+    // added by Task 4C, implementing the locked Task 4B contract (Option A);
+    // `allowanceCounts` was added by Task 4O-6R16, implementing the locked
+    // Task 4O-6R14/4O-6R15 contract — both approved additions, never a
+    // narrowing or rename of anything above.
     expect(Object.keys(context()).sort()).toEqual(
       [
         'taxYear',
@@ -370,6 +373,7 @@ describe('StateCalculationContext is unchanged', () => {
         'workRuleSet',
         'residenceRuleSet',
         'elections',
+        'allowanceCounts',
         'employer',
         'reciprocityCertificateFiled',
         'includeEmployerTaxes',
