@@ -4,6 +4,7 @@ import { StateReason, stateUnavailable, type StateUnavailable } from '../errors/
 import { StateRuleKey } from '../ruleKeys';
 import type {
   StateAmountByFilingStatusDetail,
+  StateAmountPerAllowanceDetail,
   StateBracketTableDetail,
   StateFormulaStepsDetail,
   StateRateDetail,
@@ -22,17 +23,20 @@ import type { ResolvedStateRuleSet } from './stateRuleSet';
 
 /**
  * State withholding formula interpreter — Task 4O-3A, extended by Tasks
- * 4O-5, 4O-6R6, and 4O-6R12.
+ * 4O-5, 4O-6R6, 4O-6R12, and 4O-6R17.
  *
  * ===========================================================================
- * IMPLEMENTS SIX OPERATIONS: THE THREE TASK 4O-2 CONTRACT-LOCKED ONES
+ * IMPLEMENTS SEVEN OPERATIONS: THE THREE TASK 4O-2 CONTRACT-LOCKED ONES
  * (`SUBTRACT_STANDARD_DEDUCTION`, `FLOOR_AT_ZERO`, `APPLY_BRACKETS`), PLUS
  * `SUBTRACT_EXEMPTIONS`'S PERSONAL-EXEMPTION PATH ONLY (Task 4O-4/4O-5),
  * PLUS `SUBTRACT_AMOUNT` (Task 4O-6R3/4O-6R4/4O-6R5/4O-6R6) — a GENERIC
  * SCALAR AMOUNT PRIMITIVE with no built-in real-world tax meaning: it
  * subtracts whatever `SCALAR_AMOUNT`-shaped rule its `operandRef` names —
  * PLUS `APPLY_FLAT_RATE` (Task 4O-6R9/4O-6R10/4O-6R11/4O-6R12), generic over
- * any `RATE`-shaped `StateRuleKey`.
+ * any `RATE`-shaped `StateRuleKey` — PLUS `SUBTRACT_ALLOWANCES` (Task
+ * 4O-6R14/4O-6R15/4O-6R16/4O-6R17), generic over any `AMOUNT_PER_ALLOWANCE`-
+ * shaped `StateRuleKey`, consuming an already-resolved, `StateRuleKey`-keyed
+ * allowance-count map this function now receives as its fifth parameter.
  *
  * `SUBTRACT_EXEMPTIONS` supports ONLY `operandRef ===
  * StateRuleKey.PIT_PERSONAL_EXEMPTION`. The dependent-exemption path
@@ -40,12 +44,11 @@ import type { ResolvedStateRuleSet } from './stateRuleSet';
  * other operandRef, to `SUBTRACT_EXEMPTIONS` fails `RULE_DETAIL_INVALID`
  * rather than being tolerated or treated as merely unsupported.
  *
- * The remaining six operations (`SUBTRACT_ALLOWANCES`, `ADD_AMOUNT`,
- * `APPLY_PERCENTAGE_OF`, `ANNUALIZE`, `DEANNUALIZE`, `ROUND`) remain
- * contractually unresolved (Task 4O-2 §3/§8) and are never silently
- * executed — encountering one reports `METHOD_NOT_IMPLEMENTED`, mirroring
- * the exact, already-established meaning of that reason elsewhere in the
- * project
+ * The remaining five operations (`ADD_AMOUNT`, `APPLY_PERCENTAGE_OF`,
+ * `ANNUALIZE`, `DEANNUALIZE`, `ROUND`) remain contractually unresolved
+ * (Task 4O-2 §3/§8) and are never silently executed — encountering one
+ * reports `METHOD_NOT_IMPLEMENTED`, mirroring the exact, already-established
+ * meaning of that reason elsewhere in the project
  * (`lib/calculator/pipeline/tax-stages.ts`'s `evaluateComponent()`: "the
  * calculation methodology for this category is delivered in a later phase").
  *
@@ -484,28 +487,138 @@ function applyFlatRate(
 }
 
 /**
+ * `SUBTRACT_ALLOWANCES` — Task 4O-6R14/4O-6R15/4O-6R16/4O-6R17 contract-locked,
+ * GENERIC OVER `AMOUNT_PER_ALLOWANCE`-SHAPED `StateRuleKey`s.
+ *
+ * `operandRef` is REQUIRED and validated against the same `VALID_RULE_KEYS`
+ * membership set every other generic operation already uses — it is NOT
+ * hard-coded to `StateRuleKey.WITHHOLDING_ALLOWANCE_VALUE`. The referenced
+ * rule must resolve to `AMOUNT_PER_ALLOWANCE` — any other resolved shape
+ * fails `RULE_DETAIL_INVALID`, mirroring `applyBrackets()`/`applyFlatRate()`.
+ *
+ * `allowanceType` is DESCRIPTIVE METADATA ONLY (Task 4O-6R15 §7) — it never
+ * participates in lookup. The allowance COUNT is matched by `operandRef`/
+ * `StateRuleKey` alone: `allowanceCounts[allowanceRuleKey]`, read from the
+ * already-resolved, already-validated map `runStateWithholdingFormula()`
+ * receives (Task 4O-6R16's `StateCalculationContext.allowanceCounts`
+ * shape, passed in narrowly — never the whole context). A missing OR `null`
+ * count for that specific key reports `COMPONENT_NOT_STATED` (Task 4O-6R15
+ * §13's failure table; `null` mirrors `requireComponent()`'s own
+ * null-defensive style even though the locked, non-negative-integer-Zod-
+ * validated `StateCalculationContext.allowanceCounts` type never actually
+ * produces one on the normal input path). It is never defaulted to `0` or
+ * `1`, and a count already validated non-negative-integer by the input
+ * layer is never re-validated here (Task 4O-6R15 §13).
+ *
+ * `applicability === 'NOT_APPLICABLE'` reports `SCENARIO_UNSUPPORTED`,
+ * directly transferring the `APPLY_FLAT_RATE` owner-locked pattern (Task
+ * 4O-6R11) for the identical `StateApplicability` enum. The schema's `unit`
+ * field is never read — no `ANNUAL`/`PER_PERIOD` conversion is performed,
+ * the same standing, disclosed, project-wide gap every other amount-bearing
+ * operation in this interpreter already carries.
+ *
+ * The integer count is converted to `Money` via `money(String(count))` —
+ * never `money(count)`, which the project's `money()` explicitly refuses
+ * for a JS `number` (Task 4O-6R15 §14 arithmetic note).
+ */
+function subtractAllowances(
+  ruleSet: ResolvedStateRuleSet,
+  operandRef: string | null,
+  runningValue: Money,
+  allowanceCounts: Readonly<Partial<Record<StateRuleKey, number | null>>>,
+): Read<Money> {
+  if (operandRef === null) {
+    return readFail(
+      invalidDetail('SUBTRACT_ALLOWANCES requires a non-null operandRef naming a StateRuleKey'),
+    );
+  }
+  if (!VALID_RULE_KEYS.has(operandRef)) {
+    return readFail(
+      invalidDetail(
+        `SUBTRACT_ALLOWANCES operandRef "${operandRef}" does not name a known StateRuleKey`,
+      ),
+    );
+  }
+  const allowanceRuleKey = operandRef as StateRuleKey;
+
+  const found = readDetail(ruleSet, allowanceRuleKey);
+  if (!found.ok) {
+    return readFail(found.problem);
+  }
+
+  const detail = found.value.detail as { shape: string };
+  if (detail.shape !== 'AMOUNT_PER_ALLOWANCE') {
+    return readFail(
+      invalidDetail(
+        `SUBTRACT_ALLOWANCES operandRef "${operandRef}" resolved a "${detail.shape}" rule, not ` +
+          'an AMOUNT_PER_ALLOWANCE',
+      ),
+    );
+  }
+  const allowanceDetail = found.value.detail as StateAmountPerAllowanceDetail;
+
+  if (allowanceDetail.applicability === 'NOT_APPLICABLE') {
+    return readFail(
+      stateUnavailable(
+        StateReason.SCENARIO_UNSUPPORTED,
+        `SUBTRACT_ALLOWANCES operandRef "${operandRef}" is NOT_APPLICABLE in this jurisdiction; ` +
+          'no allowance value is assumed',
+        allowanceRuleKey,
+      ),
+    );
+  }
+
+  const amount = requireComponent(allowanceDetail.amount, allowanceRuleKey, 'amount');
+  if (!amount.ok) {
+    return readFail(amount.problem);
+  }
+
+  const count = allowanceCounts[allowanceRuleKey];
+  if (count === undefined || count === null) {
+    return readFail(
+      stateUnavailable(
+        StateReason.COMPONENT_NOT_STATED,
+        `SUBTRACT_ALLOWANCES operandRef "${operandRef}" has no allowance count supplied; it is ` +
+          'not stated, and none is assumed',
+        allowanceRuleKey,
+        'allowanceCount',
+      ),
+    );
+  }
+
+  const countMoney = money(String(count));
+  return readOk(subtract(runningValue, multiply(amount.value, countMoney)));
+}
+
+/**
  * Runs a `WITHHOLDING_FORMULA`'s steps, in ascending `ordinal` order, over a
  * single running accumulator, starting from `initialValue`.
  *
  * `SUBTRACT_STANDARD_DEDUCTION`, `FLOOR_AT_ZERO`, `APPLY_BRACKETS`,
  * `SUBTRACT_EXEMPTIONS` (personal-exemption path only), `SUBTRACT_AMOUNT`,
- * and `APPLY_FLAT_RATE` are implemented. Any other operation — including
- * `SUBTRACT_EXEMPTIONS` with an operandRef other than
- * `PIT_PERSONAL_EXEMPTION`, or `SUBTRACT_AMOUNT`/`APPLY_FLAT_RATE` with an
- * invalid operandRef — reports `METHOD_NOT_IMPLEMENTED` or
- * `RULE_DETAIL_INVALID` respectively, rather than being silently skipped or
- * executed. Duplicate ordinals are never silently ordered — they report
- * `RULE_CONFLICT`, mirroring `selectStateWithholdingTableRow()`'s identical
- * treatment of ambiguous, contradictory rule data (Task 4N-R).
+ * `APPLY_FLAT_RATE`, and `SUBTRACT_ALLOWANCES` are implemented. Any other
+ * operation — including `SUBTRACT_EXEMPTIONS` with an operandRef other than
+ * `PIT_PERSONAL_EXEMPTION`, or `SUBTRACT_AMOUNT`/`APPLY_FLAT_RATE`/
+ * `SUBTRACT_ALLOWANCES` with an invalid operandRef — reports
+ * `METHOD_NOT_IMPLEMENTED` or `RULE_DETAIL_INVALID` respectively, rather
+ * than being silently skipped or executed. Duplicate ordinals are never
+ * silently ordered — they report `RULE_CONFLICT`, mirroring
+ * `selectStateWithholdingTableRow()`'s identical treatment of ambiguous,
+ * contradictory rule data (Task 4N-R).
  *
  * Pure, synchronous, DB-free: `ruleSet` is only read via `readDetail()`,
- * never mutated; `filingStatus` is read, never mutated or mapped.
+ * never mutated; `filingStatus` is read, never mutated or mapped;
+ * `allowanceCounts` (Task 4O-6R17) is an already-resolved, narrow,
+ * `StateRuleKey`-keyed map — never the whole `StateCalculationContext`, and
+ * never parsed or validated here (that is the input/context layer's job,
+ * Task 4O-6R16).
  */
 export function runStateWithholdingFormula(
   detail: StateFormulaStepsDetail,
   ruleSet: ResolvedStateRuleSet,
   initialValue: Money,
   filingStatus: string | null,
+  allowanceCounts: Readonly<Partial<Record<StateRuleKey, number | null>>>,
 ): Read<Money> {
   const ordinals = detail.steps.map((step) => step.ordinal);
   if (new Set(ordinals).size !== ordinals.length) {
@@ -553,6 +666,12 @@ export function runStateWithholdingFormula(
       }
       case 'APPLY_FLAT_RATE': {
         const result = applyFlatRate(ruleSet, step.operandRef, value);
+        if (!result.ok) return result;
+        value = result.value;
+        break;
+      }
+      case 'SUBTRACT_ALLOWANCES': {
+        const result = subtractAllowances(ruleSet, step.operandRef, value, allowanceCounts);
         if (!result.ok) return result;
         value = result.value;
         break;
