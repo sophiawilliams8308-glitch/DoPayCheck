@@ -23,9 +23,11 @@ import type { StateFormulaStepsDetail } from '@/lib/tax/state/rules/detailSchema
  * `SUBTRACT_STANDARD_DEDUCTION`, `FLOOR_AT_ZERO`, `APPLY_BRACKETS`. The
  * personal-exemption path of `SUBTRACT_EXEMPTIONS` (Task 4O-4/4O-5) has its
  * own dedicated test file,
- * `state-withholding-formula-subtract-exemptions.test.ts`, and is therefore
+ * `state-withholding-formula-subtract-exemptions.test.ts`, and `SUBTRACT_AMOUNT`
+ * (Task 4O-6R3-6R6) has its own dedicated test file,
+ * `state-withholding-formula-subtract-amount.test.ts` — both are therefore
  * excluded from this file's "unsupported operation" list below. The
- * remaining eight operations are asserted to report `METHOD_NOT_IMPLEMENTED`
+ * remaining seven operations are asserted to report `METHOD_NOT_IMPLEMENTED`
  * rather than silently executing — their own semantics are NOT locked, and
  * these tests do not attempt to pin down `PER_PERIOD` conversion, allowance
  * counts, state->federal filing-status mapping, `ANNUALIZE`/`DEANNUALIZE`
@@ -509,7 +511,6 @@ describe('multiple formula steps', () => {
 describe('unsupported operations do not silently execute', () => {
   const unsupported = [
     'SUBTRACT_ALLOWANCES',
-    'SUBTRACT_AMOUNT',
     'ADD_AMOUNT',
     'APPLY_FLAT_RATE',
     'APPLY_PERCENTAGE_OF',

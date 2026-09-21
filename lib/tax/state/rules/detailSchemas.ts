@@ -165,6 +165,47 @@ export const stateAmountPerAllowanceDetailSchema = z.object({
   applicability: StateApplicability,
 });
 
+// --- SCALAR_AMOUNT -----------------------------------------------------------
+/**
+ * A single generic scalar monetary amount — Task 4O-6R4/4O-6R5.
+ *
+ * ===========================================================================
+ * GENERIC INFRASTRUCTURE ONLY. NOT A TAX CONCEPT.
+ *
+ * This shape carries no filing-status dependence and no allowance/dependent
+ * count — it is the simplest possible amount shape this engine has: one
+ * amount, one unit. It exists to back a future rule key representing
+ * whatever named formula-level amount a jurisdiction's transcribed
+ * `WITHHOLDING_FORMULA` needs beyond the concepts this engine already has
+ * dedicated shapes and operations for (`AMOUNT_BY_FILING_STATUS` for
+ * standard deductions/personal exemptions, `AMOUNT_PER_ALLOWANCE` for
+ * dependent exemptions/withholding allowances). Mirrors federal's own
+ * `scalarAmountDetailSchema` (`FED.ANNUAL.PERSONAL_EXEMPTION`,
+ * `FED.FIT.W4.ALLOWANCE_VALUE`) as ARCHITECTURAL PRECEDENT only — no
+ * federal code or schema is imported.
+ *
+ * DELIBERATELY NOT REGISTERED IN `STATE_DETAIL_SCHEMAS` YET: that registry
+ * is exhaustive over `StateRuleKey`, and no `StateRuleKey` for a generic
+ * scalar amount exists (Task 4O-6R4 explicitly locked that none may be
+ * invented merely to exercise this schema — see the Task 4O-6R series).
+ * A future rule key representing one concrete, evidenced real-world amount
+ * concept registers against this same shared schema, exactly as
+ * `stateAmountByFilingStatusDetailSchema` is already shared, unmodified,
+ * across `PIT_STANDARD_DEDUCTION`, `PIT_PERSONAL_EXEMPTION`, and
+ * `WITHHOLDING_STANDARD_DEDUCTION`.
+ *
+ * `amount: null` means the source does not state a value — never zero.
+ * `unit` records the amount's authored basis; this schema performs no
+ * `ANNUAL`/`PER_PERIOD` conversion of any kind — that remains, as with
+ * every other amount shape in this engine, entirely outside the schema.
+ * ===========================================================================
+ */
+export const stateScalarAmountDetailSchema = z.object({
+  shape: z.literal('SCALAR_AMOUNT'),
+  unit: StateAmountUnit,
+  amount: nullableDecimal,
+});
+
 // --- COUNT_BY_PAY_PERIOD ----------------------------------------------------
 export const stateCountByPayPeriodDetailSchema = z.object({
   shape: z.literal('COUNT_BY_PAY_PERIOD'),
@@ -423,6 +464,7 @@ export type StateWageBaseDetail = z.infer<typeof stateWageBaseDetailSchema>;
 export type StateThresholdDetail = z.infer<typeof stateThresholdDetailSchema>;
 export type StateAmountByFilingStatusDetail = z.infer<typeof stateAmountByFilingStatusDetailSchema>;
 export type StateAmountPerAllowanceDetail = z.infer<typeof stateAmountPerAllowanceDetailSchema>;
+export type StateScalarAmountDetail = z.infer<typeof stateScalarAmountDetailSchema>;
 export type StateCountByPayPeriodDetail = z.infer<typeof stateCountByPayPeriodDetailSchema>;
 export type StateMethodDescriptorDetail = z.infer<typeof stateMethodDescriptorDetailSchema>;
 export type StateFormulaStepsDetail = z.infer<typeof stateFormulaStepsDetailSchema>;

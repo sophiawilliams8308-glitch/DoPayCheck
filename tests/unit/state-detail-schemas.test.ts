@@ -5,6 +5,7 @@ import {
   STATE_DETAIL_SCHEMAS,
   stateElectionFormSchemaDetailSchema,
   stateRateDetailSchema,
+  stateScalarAmountDetailSchema,
   stateThresholdDetailSchema,
   stateTaxabilityProfileDetailSchema,
   stateWageBaseDetailSchema,
@@ -223,6 +224,139 @@ describe('ELECTION_FORM_SCHEMA unit discipline', () => {
         ]),
       ).success,
     ).toBe(false);
+  });
+});
+
+describe('SCALAR_AMOUNT — generic formula-amount infrastructure (Task 4O-6R5)', () => {
+  /**
+   * This shape is intentionally NOT registered in `STATE_DETAIL_SCHEMAS`
+   * (no `StateRuleKey` exists for it yet — see the Task 4O-6R series), so
+   * these tests call the schema directly rather than through
+   * `validateStateDetail()`, matching the existing convention already used
+   * here for `stateRateDetailSchema`/`stateThresholdDetailSchema`.
+   */
+
+  it('accepts a valid annual scalar amount', () => {
+    const result = stateScalarAmountDetailSchema.safeParse({
+      shape: 'SCALAR_AMOUNT',
+      unit: 'ANNUAL',
+      amount: '500',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a valid per-period scalar amount', () => {
+    const result = stateScalarAmountDetailSchema.safeParse({
+      shape: 'SCALAR_AMOUNT',
+      unit: 'PER_PERIOD',
+      amount: '19.23',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a null amount and preserves it as null — NOT_STATED is not zero', () => {
+    const result = stateScalarAmountDetailSchema.safeParse({
+      shape: 'SCALAR_AMOUNT',
+      unit: 'ANNUAL',
+      amount: null,
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.amount).toBeNull();
+  });
+
+  it('rejects an invalid shape literal', () => {
+    const result = stateScalarAmountDetailSchema.safeParse({
+      shape: 'WAGE_BASE',
+      unit: 'ANNUAL',
+      amount: '500',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects an unsupported unit', () => {
+    const result = stateScalarAmountDetailSchema.safeParse({
+      shape: 'SCALAR_AMOUNT',
+      unit: 'PERCENT',
+      amount: '500',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a payload with amount entirely omitted', () => {
+    const result = stateScalarAmountDetailSchema.safeParse({
+      shape: 'SCALAR_AMOUNT',
+      unit: 'ANNUAL',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a floating-point amount — money travels as a string', () => {
+    const result = stateScalarAmountDetailSchema.safeParse({
+      shape: 'SCALAR_AMOUNT',
+      unit: 'ANNUAL',
+      amount: 500,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a malformed decimal string', () => {
+    const result = stateScalarAmountDetailSchema.safeParse({
+      shape: 'SCALAR_AMOUNT',
+      unit: 'ANNUAL',
+      amount: '12.34.56',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a non-numeric string', () => {
+    const result = stateScalarAmountDetailSchema.safeParse({
+      shape: 'SCALAR_AMOUNT',
+      unit: 'ANNUAL',
+      amount: 'five hundred',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts an unknown extra field, matching this file’s existing permissive schemas', () => {
+    // No schema in this file uses `.strict()`; a new strictness policy is
+    // not introduced here.
+    const result = stateScalarAmountDetailSchema.safeParse({
+      shape: 'SCALAR_AMOUNT',
+      unit: 'ANNUAL',
+      amount: '500',
+      unexpectedField: 'ignored',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('stores ANNUAL exactly as ANNUAL, performing no conversion', () => {
+    const result = stateScalarAmountDetailSchema.safeParse({
+      shape: 'SCALAR_AMOUNT',
+      unit: 'ANNUAL',
+      amount: '1200',
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.unit).toBe('ANNUAL');
+    expect(result.data.amount).toBe('1200');
+  });
+
+  it('stores PER_PERIOD exactly as PER_PERIOD, performing no conversion', () => {
+    const result = stateScalarAmountDetailSchema.safeParse({
+      shape: 'SCALAR_AMOUNT',
+      unit: 'PER_PERIOD',
+      amount: '46.15',
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.unit).toBe('PER_PERIOD');
+    expect(result.data.amount).toBe('46.15');
+  });
+
+  it('is not registered in STATE_DETAIL_SCHEMAS — no StateRuleKey exists for it yet', () => {
+    const registered = Object.values(STATE_DETAIL_SCHEMAS) as unknown[];
+    expect(registered).not.toContain(stateScalarAmountDetailSchema);
   });
 });
 

@@ -6,24 +6,30 @@ import type {
   StateAmountByFilingStatusDetail,
   StateBracketTableDetail,
   StateFormulaStepsDetail,
+  StateScalarAmountDetail,
 } from './detailSchemas';
 import {
   readDetail,
   readFail,
   readOk,
   readRate,
+  requireComponent,
   requireForFilingStatus,
   type Read,
 } from './read-detail';
 import type { ResolvedStateRuleSet } from './stateRuleSet';
 
 /**
- * State withholding formula interpreter — Task 4O-3A, extended by Task 4O-5.
+ * State withholding formula interpreter — Task 4O-3A, extended by Tasks
+ * 4O-5 and 4O-6R6.
  *
  * ===========================================================================
- * IMPLEMENTS FOUR OPERATIONS: THE THREE TASK 4O-2 CONTRACT-LOCKED ONES
- * (`SUBTRACT_STANDARD_DEDUCTION`, `FLOOR_AT_ZERO`, `APPLY_BRACKETS`) PLUS
- * `SUBTRACT_EXEMPTIONS`'S PERSONAL-EXEMPTION PATH ONLY (Task 4O-4/4O-5).
+ * IMPLEMENTS FIVE OPERATIONS: THE THREE TASK 4O-2 CONTRACT-LOCKED ONES
+ * (`SUBTRACT_STANDARD_DEDUCTION`, `FLOOR_AT_ZERO`, `APPLY_BRACKETS`), PLUS
+ * `SUBTRACT_EXEMPTIONS`'S PERSONAL-EXEMPTION PATH ONLY (Task 4O-4/4O-5),
+ * PLUS `SUBTRACT_AMOUNT` (Task 4O-6R3/4O-6R4/4O-6R5/4O-6R6) — a GENERIC
+ * SCALAR AMOUNT PRIMITIVE with no built-in real-world tax meaning: it
+ * subtracts whatever `SCALAR_AMOUNT`-shaped rule its `operandRef` names.
  *
  * `SUBTRACT_EXEMPTIONS` supports ONLY `operandRef ===
  * StateRuleKey.PIT_PERSONAL_EXEMPTION`. The dependent-exemption path
@@ -31,12 +37,12 @@ import type { ResolvedStateRuleSet } from './stateRuleSet';
  * other operandRef, to `SUBTRACT_EXEMPTIONS` fails `RULE_DETAIL_INVALID`
  * rather than being tolerated or treated as merely unsupported.
  *
- * The remaining eight operations (`SUBTRACT_ALLOWANCES`, `SUBTRACT_AMOUNT`,
- * `ADD_AMOUNT`, `APPLY_FLAT_RATE`, `APPLY_PERCENTAGE_OF`, `ANNUALIZE`,
- * `DEANNUALIZE`, `ROUND`) remain contractually unresolved (Task 4O-2 §3/§8)
- * and are never silently executed — encountering one reports
- * `METHOD_NOT_IMPLEMENTED`, mirroring the exact, already-established meaning
- * of that reason elsewhere in the project
+ * The remaining seven operations (`SUBTRACT_ALLOWANCES`, `ADD_AMOUNT`,
+ * `APPLY_FLAT_RATE`, `APPLY_PERCENTAGE_OF`, `ANNUALIZE`, `DEANNUALIZE`,
+ * `ROUND`) remain contractually unresolved (Task 4O-2 §3/§8) and are never
+ * silently executed — encountering one reports `METHOD_NOT_IMPLEMENTED`,
+ * mirroring the exact, already-established meaning of that reason elsewhere
+ * in the project
  * (`lib/calculator/pipeline/tax-stages.ts`'s `evaluateComponent()`: "the
  * calculation methodology for this category is delivered in a later phase").
  *
@@ -316,15 +322,84 @@ function applyBrackets(
 }
 
 /**
+ * `SUBTRACT_AMOUNT` — Task 4O-6R4/4O-6R5/4O-6R6 contract-locked, GENERIC
+ * SCALAR AMOUNT PRIMITIVE.
+ *
+ * `operandRef` is REQUIRED and must name a real `StateRuleKey` (validated
+ * against the same `VALID_RULE_KEYS` membership set `applyBrackets()` already
+ * uses). The referenced rule must resolve to `SCALAR_AMOUNT`
+ * (`stateScalarAmountDetailSchema`, Task 4O-6R5) — any other resolved shape
+ * fails `RULE_DETAIL_INVALID`, exactly mirroring `applyBrackets()`'s own
+ * `detail.shape !== 'BRACKET_TABLE'` check.
+ *
+ * This operation carries NO built-in real-world tax meaning (Task 4O-6R3):
+ * it is a mechanism, not a concept. It performs no filing-status lookup (the
+ * `SCALAR_AMOUNT` shape has no filing-status dependence), and the schema's
+ * `unit` field (`ANNUAL`/`PER_PERIOD`) is read by nobody and never converted
+ * — the authored amount is subtracted exactly as stated, on the standing
+ * assumption (disclosed, project-wide, unchanged by this operation) that it
+ * was authored in the basis the calling formula expects.
+ *
+ * Amount resolution reuses the existing, unmodified `requireComponent()` —
+ * not `requireForFilingStatus()`, since `SCALAR_AMOUNT` carries a single
+ * amount, not a per-filing-status row — so a `null` amount is reported as
+ * `COMPONENT_NOT_STATED` rather than treated as zero.
+ */
+function subtractAmount(
+  ruleSet: ResolvedStateRuleSet,
+  operandRef: string | null,
+  runningValue: Money,
+): Read<Money> {
+  if (operandRef === null) {
+    return readFail(
+      invalidDetail('SUBTRACT_AMOUNT requires a non-null operandRef naming a StateRuleKey'),
+    );
+  }
+  if (!VALID_RULE_KEYS.has(operandRef)) {
+    return readFail(
+      invalidDetail(
+        `SUBTRACT_AMOUNT operandRef "${operandRef}" does not name a known StateRuleKey`,
+      ),
+    );
+  }
+  const amountRuleKey = operandRef as StateRuleKey;
+
+  const found = readDetail(ruleSet, amountRuleKey);
+  if (!found.ok) {
+    return readFail(found.problem);
+  }
+
+  const detail = found.value.detail as { shape: string };
+  if (detail.shape !== 'SCALAR_AMOUNT') {
+    return readFail(
+      invalidDetail(
+        `SUBTRACT_AMOUNT operandRef "${operandRef}" resolved a "${detail.shape}" rule, not a ` +
+          'SCALAR_AMOUNT',
+      ),
+    );
+  }
+  const scalarDetail = found.value.detail as StateScalarAmountDetail;
+
+  const amount = requireComponent(scalarDetail.amount, amountRuleKey, 'amount');
+  if (!amount.ok) {
+    return readFail(amount.problem);
+  }
+
+  return readOk(subtract(runningValue, amount.value));
+}
+
+/**
  * Runs a `WITHHOLDING_FORMULA`'s steps, in ascending `ordinal` order, over a
  * single running accumulator, starting from `initialValue`.
  *
- * `SUBTRACT_STANDARD_DEDUCTION`, `FLOOR_AT_ZERO`, `APPLY_BRACKETS`, and
- * `SUBTRACT_EXEMPTIONS` (personal-exemption path only) are implemented. Any
- * other operation — including `SUBTRACT_EXEMPTIONS` with an operandRef other
- * than `PIT_PERSONAL_EXEMPTION` — reports `METHOD_NOT_IMPLEMENTED` or
- * `RULE_DETAIL_INVALID` respectively, rather than being silently skipped or
- * executed. Duplicate ordinals are never silently ordered — they report
+ * `SUBTRACT_STANDARD_DEDUCTION`, `FLOOR_AT_ZERO`, `APPLY_BRACKETS`,
+ * `SUBTRACT_EXEMPTIONS` (personal-exemption path only), and `SUBTRACT_AMOUNT`
+ * are implemented. Any other operation — including `SUBTRACT_EXEMPTIONS`
+ * with an operandRef other than `PIT_PERSONAL_EXEMPTION`, or
+ * `SUBTRACT_AMOUNT` with an invalid operandRef — reports
+ * `METHOD_NOT_IMPLEMENTED` or `RULE_DETAIL_INVALID` respectively, rather
+ * than being silently skipped or executed. Duplicate ordinals are never
+ * silently ordered — they report
  * `RULE_CONFLICT`, mirroring `selectStateWithholdingTableRow()`'s identical
  * treatment of ambiguous, contradictory rule data (Task 4N-R).
  *
@@ -371,6 +446,12 @@ export function runStateWithholdingFormula(
       }
       case 'SUBTRACT_EXEMPTIONS': {
         const result = subtractExemptions(ruleSet, filingStatus, step.operandRef, value);
+        if (!result.ok) return result;
+        value = result.value;
+        break;
+      }
+      case 'SUBTRACT_AMOUNT': {
+        const result = subtractAmount(ruleSet, step.operandRef, value);
         if (!result.ok) return result;
         value = result.value;
         break;
