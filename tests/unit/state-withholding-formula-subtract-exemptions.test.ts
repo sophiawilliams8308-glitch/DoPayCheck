@@ -109,7 +109,15 @@ describe('SUBTRACT_EXEMPTIONS — valid personal exemption', () => {
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_EXEMPTIONS', EXEMPTION_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('10000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('10000'),
+      SINGLE,
+      {},
+      {},
+      null,
+    );
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -129,7 +137,7 @@ describe('SUBTRACT_EXEMPTIONS — operandRef validation', () => {
       step(0, 'SUBTRACT_EXEMPTIONS', StateRuleKey.PIT_PERSONAL_EXEMPTION),
     ]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(true);
   });
@@ -143,7 +151,7 @@ describe('SUBTRACT_EXEMPTIONS — operandRef validation', () => {
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_EXEMPTIONS', null)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -161,7 +169,7 @@ describe('SUBTRACT_EXEMPTIONS — operandRef validation', () => {
       step(0, 'SUBTRACT_EXEMPTIONS', StateRuleKey.PIT_STANDARD_DEDUCTION),
     ]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -172,7 +180,7 @@ describe('SUBTRACT_EXEMPTIONS — operandRef validation', () => {
     const ruleSet = buildRuleSet({});
     const detail = formulaDetail([step(0, 'SUBTRACT_EXEMPTIONS', 'NOT_A_REAL_STATE_RULE_KEY')]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -185,7 +193,7 @@ describe('SUBTRACT_EXEMPTIONS — operandRef validation', () => {
       step(0, 'SUBTRACT_EXEMPTIONS', StateRuleKey.PIT_DEPENDENT_EXEMPTION),
     ]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -207,7 +215,7 @@ describe('SUBTRACT_EXEMPTIONS — filing status', () => {
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_EXEMPTIONS', EXEMPTION_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), null, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), null, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -223,7 +231,7 @@ describe('SUBTRACT_EXEMPTIONS — filing status', () => {
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_EXEMPTIONS', EXEMPTION_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -239,7 +247,7 @@ describe('SUBTRACT_EXEMPTIONS — filing status', () => {
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_EXEMPTIONS', EXEMPTION_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -252,7 +260,7 @@ describe('SUBTRACT_EXEMPTIONS — missing / unverified / invalid rule', () => {
     const ruleSet = buildRuleSet({});
     const detail = formulaDetail([step(0, 'SUBTRACT_EXEMPTIONS', EXEMPTION_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -269,7 +277,7 @@ describe('SUBTRACT_EXEMPTIONS — missing / unverified / invalid rule', () => {
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_EXEMPTIONS', EXEMPTION_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -287,7 +295,7 @@ describe('SUBTRACT_EXEMPTIONS — missing / unverified / invalid rule', () => {
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_EXEMPTIONS', EXEMPTION_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -305,7 +313,7 @@ describe('SUBTRACT_EXEMPTIONS — arithmetic', () => {
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_EXEMPTIONS', EXEMPTION_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -324,7 +332,7 @@ describe('SUBTRACT_EXEMPTIONS — arithmetic', () => {
       step(1, 'FLOOR_AT_ZERO'),
     ]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -346,7 +354,15 @@ describe('SUBTRACT_EXEMPTIONS — unit is not interpreted', () => {
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_EXEMPTIONS', EXEMPTION_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('10000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('10000'),
+      SINGLE,
+      {},
+      {},
+      null,
+    );
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -359,8 +375,14 @@ describe('SUBTRACT_EXEMPTIONS — unit is not interpreted', () => {
       new URL('../../lib/tax/state/rules/withholdingFormulaInterpreter.ts', import.meta.url),
       'utf8',
     );
-    expect(source).not.toMatch(/resolveStatePayPeriodsPerYear/);
-    expect(source).not.toMatch(/withholdingPayPeriods/);
+    // Scoped to subtractExemptions() itself (up to the next top-level
+    // function), not the whole module — ANNUALIZE (Task 4O-6R34) legitimately
+    // calls resolveStatePayPeriodsPerYear() elsewhere in this same file.
+    const match = /function subtractExemptions\([\s\S]*?\n}\n/.exec(source);
+    if (!match) throw new Error('subtractExemptions() not found in source');
+    const functionSource = match[0];
+    expect(functionSource).not.toMatch(/resolveStatePayPeriodsPerYear/);
+    expect(functionSource).not.toMatch(/withholdingPayPeriods/);
   });
 });
 
@@ -383,7 +405,7 @@ describe('SUBTRACT_EXEMPTIONS — existing operations remain unchanged', () => {
       step(2, 'FLOOR_AT_ZERO'),
     ]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');

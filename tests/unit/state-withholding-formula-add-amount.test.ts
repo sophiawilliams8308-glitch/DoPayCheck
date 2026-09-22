@@ -144,7 +144,7 @@ describe('ADD_AMOUNT — operandRef validation', () => {
     const ruleSet = buildRuleSet({});
     const detail = formulaDetail([step(0, 'ADD_AMOUNT', null)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -157,7 +157,7 @@ describe('ADD_AMOUNT — operandRef validation', () => {
     });
     const detail = formulaDetail([step(0, 'ADD_AMOUNT', 'NOT_A_REAL_FIELD_KEY')]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -170,7 +170,7 @@ describe('ADD_AMOUNT — election form resolution', () => {
     const ruleSet = buildRuleSet({});
     const detail = formulaDetail([step(0, 'ADD_AMOUNT', AMOUNT_FIELD)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -187,7 +187,7 @@ describe('ADD_AMOUNT — election form resolution', () => {
     });
     const detail = formulaDetail([step(0, 'ADD_AMOUNT', AMOUNT_FIELD)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -206,7 +206,7 @@ describe('ADD_AMOUNT — election form resolution', () => {
     });
     const detail = formulaDetail([step(0, 'ADD_AMOUNT', AMOUNT_FIELD)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -224,7 +224,7 @@ describe('ADD_AMOUNT — field declaration and type', () => {
     });
     const detail = formulaDetail([step(0, 'ADD_AMOUNT', AMOUNT_FIELD)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -240,7 +240,7 @@ describe('ADD_AMOUNT — field declaration and type', () => {
     });
     const detail = formulaDetail([step(0, 'ADD_AMOUNT', AMOUNT_FIELD)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -263,6 +263,7 @@ describe('ADD_AMOUNT — field declaration and type', () => {
       SINGLE,
       {},
       elections({ [AMOUNT_FIELD]: { fieldKey: AMOUNT_FIELD, value: '25', unit: 'PER_PERIOD' } }),
+      null,
     );
 
     expect(result.ok).toBe(true);
@@ -282,7 +283,7 @@ describe('ADD_AMOUNT — submitted value resolution', () => {
   it('reports COMPONENT_NOT_STATED when no value was submitted for the field', () => {
     const detail = formulaDetail([step(0, 'ADD_AMOUNT', AMOUNT_FIELD)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -299,6 +300,7 @@ describe('ADD_AMOUNT — submitted value resolution', () => {
       SINGLE,
       {},
       elections({ [AMOUNT_FIELD]: null }),
+      null,
     );
 
     expect(result.ok).toBe(false);
@@ -316,6 +318,7 @@ describe('ADD_AMOUNT — submitted value resolution', () => {
       SINGLE,
       {},
       elections({ [AMOUNT_FIELD]: { fieldKey: AMOUNT_FIELD, value: '50', unit: 'PER_PERIOD' } }),
+      null,
     );
 
     expect(result.ok).toBe(true);
@@ -333,6 +336,7 @@ describe('ADD_AMOUNT — submitted value resolution', () => {
       SINGLE,
       {},
       elections({ [AMOUNT_FIELD]: { fieldKey: AMOUNT_FIELD, value: 50 } }),
+      null,
     );
 
     expect(result.ok).toBe(false);
@@ -350,6 +354,7 @@ describe('ADD_AMOUNT — submitted value resolution', () => {
       SINGLE,
       {},
       elections({ [AMOUNT_FIELD]: { fieldKey: AMOUNT_FIELD, value: true } }),
+      null,
     );
 
     expect(result.ok).toBe(false);
@@ -375,6 +380,7 @@ describe('ADD_AMOUNT — unit matching', () => {
       SINGLE,
       {},
       elections({ [AMOUNT_FIELD]: { fieldKey: AMOUNT_FIELD, value: '100', unit: 'ANNUAL' } }),
+      null,
     );
 
     expect(result.ok).toBe(true);
@@ -398,6 +404,7 @@ describe('ADD_AMOUNT — unit matching', () => {
       SINGLE,
       {},
       elections({ [AMOUNT_FIELD]: { fieldKey: AMOUNT_FIELD, value: '100', unit: 'PER_PERIOD' } }),
+      null,
     );
 
     expect(result.ok).toBe(true);
@@ -421,6 +428,7 @@ describe('ADD_AMOUNT — unit matching', () => {
       SINGLE,
       {},
       elections({ [AMOUNT_FIELD]: { fieldKey: AMOUNT_FIELD, value: '100', unit: 'PER_PERIOD' } }),
+      null,
     );
 
     expect(result.ok).toBe(false);
@@ -444,6 +452,7 @@ describe('ADD_AMOUNT — unit matching', () => {
       SINGLE,
       {},
       elections({ [AMOUNT_FIELD]: { fieldKey: AMOUNT_FIELD, value: '100', unit: 'ANNUAL' } }),
+      null,
     );
 
     expect(result.ok).toBe(false);
@@ -469,6 +478,7 @@ describe('ADD_AMOUNT — arithmetic', () => {
       SINGLE,
       {},
       elections({ [AMOUNT_FIELD]: { fieldKey: AMOUNT_FIELD, value: '75', unit: 'PER_PERIOD' } }),
+      null,
     );
 
     expect(result.ok).toBe(true);
@@ -485,6 +495,7 @@ describe('ADD_AMOUNT — arithmetic', () => {
       SINGLE,
       {},
       elections({ [AMOUNT_FIELD]: { fieldKey: AMOUNT_FIELD, value: '0', unit: 'PER_PERIOD' } }),
+      null,
     );
 
     expect(result.ok).toBe(true);
@@ -501,6 +512,7 @@ describe('ADD_AMOUNT — arithmetic', () => {
       SINGLE,
       {},
       elections({ [AMOUNT_FIELD]: { fieldKey: AMOUNT_FIELD, value: '-40', unit: 'PER_PERIOD' } }),
+      null,
     );
 
     expect(result.ok).toBe(true);
@@ -533,6 +545,7 @@ describe('ADD_AMOUNT — arithmetic', () => {
       SINGLE,
       {},
       elections({ [AMOUNT_FIELD]: { fieldKey: AMOUNT_FIELD, value: '30', unit: 'PER_PERIOD' } }),
+      null,
     );
 
     expect(result.ok).toBe(true);
@@ -612,7 +625,15 @@ describe('ADD_AMOUNT — jurisdiction scoping (via resolveWorkJurisdictionElecti
     const resolved = resolveWorkJurisdictionElections(context);
     const detail = formulaDetail([step(0, 'ADD_AMOUNT', AMOUNT_FIELD)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, resolved);
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('1000'),
+      SINGLE,
+      {},
+      resolved,
+      null,
+    );
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -633,7 +654,15 @@ describe('ADD_AMOUNT — jurisdiction scoping (via resolveWorkJurisdictionElecti
     const resolved = resolveWorkJurisdictionElections(context);
     const detail = formulaDetail([step(0, 'ADD_AMOUNT', AMOUNT_FIELD)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, resolved);
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('1000'),
+      SINGLE,
+      {},
+      resolved,
+      null,
+    );
 
     // The residence jurisdiction's value is never visible: no value was
     // resolved for the work jurisdiction, so this is COMPONENT_NOT_STATED,
@@ -719,7 +748,7 @@ describe('ADD_AMOUNT — regression: other operations are unaffected', () => {
       step(2, 'APPLY_BRACKETS', bracketsKey),
     ]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -731,7 +760,7 @@ describe('ADD_AMOUNT — regression: other operations are unaffected', () => {
     const ruleSet = buildRuleSet({});
     const detail = formulaDetail([step(0, 'SUBTRACT_AMOUNT', 'NOT_A_REAL_STATE_RULE_KEY')]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');

@@ -124,7 +124,7 @@ describe('APPLY_PERCENTAGE_OF — arithmetic (owner-locked Option B, Task 4O-6R2
     });
     const detail = formulaDetail([step(0, 'APPLY_PERCENTAGE_OF', RATE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -138,7 +138,7 @@ describe('APPLY_PERCENTAGE_OF — arithmetic (owner-locked Option B, Task 4O-6R2
     });
     const detail = formulaDetail([step(0, 'APPLY_PERCENTAGE_OF', RATE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -151,7 +151,7 @@ describe('APPLY_PERCENTAGE_OF — arithmetic (owner-locked Option B, Task 4O-6R2
     });
     const detail = formulaDetail([step(0, 'APPLY_PERCENTAGE_OF', RATE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('500'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('500'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -165,7 +165,7 @@ describe('APPLY_PERCENTAGE_OF — arithmetic (owner-locked Option B, Task 4O-6R2
     });
     const detail = formulaDetail([step(0, 'APPLY_PERCENTAGE_OF', RATE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -185,6 +185,7 @@ describe('APPLY_PERCENTAGE_OF — arithmetic (owner-locked Option B, Task 4O-6R2
       SINGLE,
       {},
       {},
+      null,
     );
     const flatRateResult = runStateWithholdingFormula(
       formulaDetail([step(0, 'APPLY_FLAT_RATE', RATE_KEY)]),
@@ -193,6 +194,7 @@ describe('APPLY_PERCENTAGE_OF — arithmetic (owner-locked Option B, Task 4O-6R2
       SINGLE,
       {},
       {},
+      null,
     );
 
     expect(percentageOfResult.ok).toBe(true);
@@ -211,7 +213,7 @@ describe('APPLY_PERCENTAGE_OF — operandRef validation', () => {
     const ruleSet = buildRuleSet({});
     const detail = formulaDetail([step(0, 'APPLY_PERCENTAGE_OF', null)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -222,7 +224,7 @@ describe('APPLY_PERCENTAGE_OF — operandRef validation', () => {
     const ruleSet = buildRuleSet({});
     const detail = formulaDetail([step(0, 'APPLY_PERCENTAGE_OF', 'NOT_A_REAL_STATE_RULE_KEY')]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -236,7 +238,7 @@ describe('APPLY_PERCENTAGE_OF — operandRef validation', () => {
     });
     const detail = formulaDetail([step(0, 'APPLY_PERCENTAGE_OF', otherRateKey)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -249,7 +251,7 @@ describe('APPLY_PERCENTAGE_OF — referenced rule missing/unverified/malformed',
     const ruleSet = buildRuleSet({});
     const detail = formulaDetail([step(0, 'APPLY_PERCENTAGE_OF', RATE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -264,7 +266,7 @@ describe('APPLY_PERCENTAGE_OF — referenced rule missing/unverified/malformed',
     });
     const detail = formulaDetail([step(0, 'APPLY_PERCENTAGE_OF', RATE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -283,7 +285,7 @@ describe('APPLY_PERCENTAGE_OF — referenced rule missing/unverified/malformed',
     });
     const detail = formulaDetail([step(0, 'APPLY_PERCENTAGE_OF', RATE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -301,7 +303,7 @@ describe('APPLY_PERCENTAGE_OF — referenced rule missing/unverified/malformed',
     });
     const detail = formulaDetail([step(0, 'APPLY_PERCENTAGE_OF', RATE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -316,7 +318,7 @@ describe('APPLY_PERCENTAGE_OF — null rate', () => {
     });
     const detail = formulaDetail([step(0, 'APPLY_PERCENTAGE_OF', RATE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -334,7 +336,7 @@ describe('APPLY_PERCENTAGE_OF — applicability and appliesTo (transferred from 
     });
     const detail = formulaDetail([step(0, 'APPLY_PERCENTAGE_OF', RATE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -347,7 +349,7 @@ describe('APPLY_PERCENTAGE_OF — applicability and appliesTo (transferred from 
     });
     const detail = formulaDetail([step(0, 'APPLY_PERCENTAGE_OF', RATE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -363,7 +365,7 @@ describe('APPLY_PERCENTAGE_OF — applicability and appliesTo (transferred from 
     });
     const detail = formulaDetail([step(0, 'APPLY_PERCENTAGE_OF', RATE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -380,7 +382,15 @@ describe('APPLY_PERCENTAGE_OF — precision', () => {
 
     // 10.005 * 1.1 === 11.0055 exactly; naive IEEE-754 float arithmetic would
     // not reproduce this exactly.
-    const result = runStateWithholdingFormula(detail, ruleSet, money('10.005'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('10.005'),
+      SINGLE,
+      {},
+      {},
+      null,
+    );
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -403,7 +413,7 @@ describe('APPLY_PERCENTAGE_OF — sequential accumulator behavior', () => {
       step(1, 'APPLY_PERCENTAGE_OF', RATE_KEY),
     ]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');

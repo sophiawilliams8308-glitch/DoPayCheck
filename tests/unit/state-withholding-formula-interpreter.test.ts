@@ -33,14 +33,16 @@ import type { StateFormulaStepsDetail } from '@/lib/tax/state/rules/detailSchema
  * (Task 4O-6R20-6R23) has its own dedicated test file,
  * `state-withholding-formula-add-amount.test.ts`; and `APPLY_PERCENTAGE_OF`
  * (Task 4O-6R24-6R26) has its own dedicated test file,
- * `state-withholding-formula-apply-percentage-of.test.ts` — all six are
- * therefore excluded from this file's "unsupported operation" list below.
- * The remaining three operations are asserted to report
- * `METHOD_NOT_IMPLEMENTED` rather than silently executing — their own
- * semantics are NOT locked, and these tests do not attempt to pin down
- * state->federal filing-status mapping, `ANNUALIZE`/`DEANNUALIZE`
- * periods-per-year, or `ROUND` scale selection, since Task 4O-2 left all of
- * those unresolved.
+ * `state-withholding-formula-apply-percentage-of.test.ts`; and `ANNUALIZE`
+ * (Task 4O-6R32-6R34) has its own dedicated test file,
+ * `state-withholding-formula-annualize.test.ts` — all seven are therefore
+ * excluded from this file's "unsupported operation" list below.
+ * The remaining two operations (`ROUND`, `DEANNUALIZE`) are asserted to
+ * report `METHOD_NOT_IMPLEMENTED` rather than silently executing — their own
+ * semantics are NOT locked: `ROUND` was explicitly locked outside this
+ * interpreter's scope entirely (Task 4O-6R31), and `DEANNUALIZE` was left
+ * separately unresolved (Task 4O-6R33 §5) due to its own rounding-policy
+ * precision question.
  * ===========================================================================
  *
  * Fixtures use RESERVED TEST jurisdiction/source ids and no real tax value.
@@ -143,6 +145,7 @@ describe('empty step list', () => {
       SINGLE,
       {},
       {},
+      null,
     );
 
     expect(result.ok).toBe(true);
@@ -156,7 +159,15 @@ describe('FLOOR_AT_ZERO', () => {
     const ruleSet = buildRuleSet({});
     const detail = formulaDetail([step(0, 'FLOOR_AT_ZERO')]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('42.50'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('42.50'),
+      SINGLE,
+      {},
+      {},
+      null,
+    );
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -167,7 +178,7 @@ describe('FLOOR_AT_ZERO', () => {
     const ruleSet = buildRuleSet({});
     const detail = formulaDetail([step(0, 'FLOOR_AT_ZERO')]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('-10'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('-10'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -178,7 +189,7 @@ describe('FLOOR_AT_ZERO', () => {
     const ruleSet = buildRuleSet({});
     const detail = formulaDetail([step(0, 'FLOOR_AT_ZERO', 'SOME_REF')]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('10'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('10'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -196,7 +207,7 @@ describe('SUBTRACT_STANDARD_DEDUCTION', () => {
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_STANDARD_DEDUCTION')]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -212,7 +223,7 @@ describe('SUBTRACT_STANDARD_DEDUCTION', () => {
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_STANDARD_DEDUCTION', DEDUCTION_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -228,7 +239,7 @@ describe('SUBTRACT_STANDARD_DEDUCTION', () => {
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_STANDARD_DEDUCTION')]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), null, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), null, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -241,7 +252,7 @@ describe('missing / unverified / invalid standard deduction rule', () => {
     const ruleSet = buildRuleSet({});
     const detail = formulaDetail([step(0, 'SUBTRACT_STANDARD_DEDUCTION')]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -258,7 +269,7 @@ describe('missing / unverified / invalid standard deduction rule', () => {
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_STANDARD_DEDUCTION')]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -276,7 +287,7 @@ describe('missing / unverified / invalid standard deduction rule', () => {
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_STANDARD_DEDUCTION')]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -294,7 +305,7 @@ describe('filing-status row behavior', () => {
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_STANDARD_DEDUCTION')]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -310,7 +321,7 @@ describe('filing-status row behavior', () => {
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_STANDARD_DEDUCTION')]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -335,7 +346,7 @@ describe('APPLY_BRACKETS', () => {
     });
     const detail = formulaDetail([step(0, 'APPLY_BRACKETS', BRACKETS_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('4000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('4000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -349,7 +360,7 @@ describe('APPLY_BRACKETS', () => {
     });
     const detail = formulaDetail([step(0, 'APPLY_BRACKETS')]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('4000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('4000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -362,7 +373,7 @@ describe('APPLY_BRACKETS', () => {
     });
     const detail = formulaDetail([step(0, 'APPLY_BRACKETS', 'NOT_A_REAL_STATE_RULE_KEY')]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('4000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('4000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -375,7 +386,7 @@ describe('APPLY_BRACKETS', () => {
     });
     const detail = formulaDetail([step(0, 'APPLY_BRACKETS', BRACKETS_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('4000'), null, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('4000'), null, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -388,7 +399,15 @@ describe('APPLY_BRACKETS', () => {
     });
     const detail = formulaDetail([step(0, 'APPLY_BRACKETS', BRACKETS_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('4000'), 'MARRIED', {}, {});
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('4000'),
+      'MARRIED',
+      {},
+      {},
+      null,
+    );
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -401,7 +420,7 @@ describe('missing / unverified / invalid bracket rule', () => {
     const ruleSet = buildRuleSet({});
     const detail = formulaDetail([step(0, 'APPLY_BRACKETS', BRACKETS_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('4000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('4000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -416,7 +435,7 @@ describe('missing / unverified / invalid bracket rule', () => {
     });
     const detail = formulaDetail([step(0, 'APPLY_BRACKETS', BRACKETS_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('4000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('4000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -434,7 +453,7 @@ describe('missing / unverified / invalid bracket rule', () => {
     });
     const detail = formulaDetail([step(0, 'APPLY_BRACKETS', BRACKETS_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('4000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('4000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -461,7 +480,7 @@ describe('ordered sequential execution', () => {
       step(0, 'SUBTRACT_STANDARD_DEDUCTION'),
     ]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('600'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('600'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -473,7 +492,7 @@ describe('ordered sequential execution', () => {
     const ruleSet = buildRuleSet({});
     const detail = formulaDetail([step(0, 'FLOOR_AT_ZERO'), step(0, 'FLOOR_AT_ZERO')]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('10'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('10'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -496,7 +515,7 @@ describe('multiple formula steps', () => {
       step(2, 'APPLY_BRACKETS', BRACKETS_KEY),
     ]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -514,7 +533,7 @@ describe('multiple formula steps', () => {
       step(1, 'APPLY_BRACKETS', BRACKETS_KEY),
     ]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -524,7 +543,7 @@ describe('multiple formula steps', () => {
 });
 
 describe('unsupported operations do not silently execute', () => {
-  const unsupported = ['ROUND', 'ANNUALIZE', 'DEANNUALIZE'] as const;
+  const unsupported = ['ROUND', 'DEANNUALIZE'] as const;
 
   it.each(unsupported)(
     'reports METHOD_NOT_IMPLEMENTED for %s rather than inventing a result',
@@ -532,7 +551,15 @@ describe('unsupported operations do not silently execute', () => {
       const ruleSet = buildRuleSet({});
       const detail = formulaDetail([step(0, operation)]);
 
-      const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {});
+      const result = runStateWithholdingFormula(
+        detail,
+        ruleSet,
+        money('100'),
+        SINGLE,
+        {},
+        {},
+        null,
+      );
 
       expect(result.ok).toBe(false);
       if (result.ok) throw new Error('expected failure');
@@ -544,7 +571,7 @@ describe('unsupported operations do not silently execute', () => {
     const ruleSet = buildRuleSet({});
     const detail = formulaDetail([step(0, 'ROUND'), step(1, 'FLOOR_AT_ZERO')]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('-5'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('-5'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -562,7 +589,7 @@ describe('purity', () => {
     const detail = formulaDetail([step(0, 'SUBTRACT_STANDARD_DEDUCTION')]);
 
     const before = stateRule(ruleSet, DEDUCTION_KEY);
-    runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {});
+    runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {}, null);
     const after = stateRule(ruleSet, DEDUCTION_KEY);
 
     expect(after).toBe(before);
@@ -575,7 +602,7 @@ describe('purity', () => {
     const initialValue: Money = money('-25');
     const filingStatus = SINGLE;
 
-    runStateWithholdingFormula(detail, ruleSet, initialValue, filingStatus, {}, {});
+    runStateWithholdingFormula(detail, ruleSet, initialValue, filingStatus, {}, {}, null);
 
     expect(toStorageString(initialValue)).toBe('-25');
     expect(filingStatus).toBe(SINGLE);
@@ -584,7 +611,7 @@ describe('purity', () => {
   it('is synchronous — no awaited call, no Promise return', () => {
     const ruleSet = buildRuleSet({});
     const detail = formulaDetail([step(0, 'FLOOR_AT_ZERO')]);
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1'), SINGLE, {}, {}, null);
     expect(result).not.toBeInstanceOf(Promise);
   });
 });
@@ -604,8 +631,8 @@ describe('determinism', () => {
       step(2, 'APPLY_BRACKETS', BRACKETS_KEY),
     ]);
 
-    const first = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {});
-    const second = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {});
+    const first = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {}, null);
+    const second = runStateWithholdingFormula(detail, ruleSet, money('5000'), SINGLE, {}, {}, null);
 
     expect(first).toEqual(second);
   });
@@ -621,7 +648,7 @@ describe('Money precision — no floating-point arithmetic', () => {
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_STANDARD_DEDUCTION')]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('0.3'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('0.3'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -644,7 +671,7 @@ describe('Money precision — no floating-point arithmetic', () => {
     const ruleSet = buildRuleSet({ [BRACKETS_KEY]: availableEntry(BRACKETS_KEY, brackets) });
     const detail = formulaDetail([step(0, 'APPLY_BRACKETS', BRACKETS_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('3'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('3'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -682,8 +709,12 @@ describe('no forbidden responsibilities', () => {
       .filter((line) => /^import\b/.test(line.trim()))
       .join('\n');
     expect(importLines).not.toMatch(/lib\/calculator/);
+    // withholdingPayPeriods is deliberately EXCLUDED from this forbidden list:
+    // ANNUALIZE (Task 4O-6R32-6R34, owner-locked) is explicitly required to
+    // import resolveStatePayPeriodsPerYear from it. The other three remain
+    // forbidden — none of them are consumed by any implemented operation.
     expect(importLines).not.toMatch(
-      /withholdingTable|withholdingPayPeriods|withholdingFilingStatusMap|withholdingRoundingPolicy/,
+      /withholdingTable|withholdingFilingStatusMap|withholdingRoundingPolicy/,
     );
   });
 });

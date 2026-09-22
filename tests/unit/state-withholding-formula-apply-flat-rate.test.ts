@@ -123,7 +123,7 @@ describe('APPLY_FLAT_RATE — arithmetic', () => {
     });
     const detail = formulaDetail([step(0, 'APPLY_FLAT_RATE', RATE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -136,7 +136,7 @@ describe('APPLY_FLAT_RATE — arithmetic', () => {
     });
     const detail = formulaDetail([step(0, 'APPLY_FLAT_RATE', RATE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -149,7 +149,7 @@ describe('APPLY_FLAT_RATE — arithmetic', () => {
     });
     const detail = formulaDetail([step(0, 'APPLY_FLAT_RATE', RATE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('500'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('500'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -162,7 +162,7 @@ describe('APPLY_FLAT_RATE — arithmetic', () => {
     });
     const detail = formulaDetail([step(0, 'APPLY_FLAT_RATE', RATE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -175,7 +175,7 @@ describe('APPLY_FLAT_RATE — operandRef validation', () => {
     const ruleSet = buildRuleSet({});
     const detail = formulaDetail([step(0, 'APPLY_FLAT_RATE', null)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -186,7 +186,7 @@ describe('APPLY_FLAT_RATE — operandRef validation', () => {
     const ruleSet = buildRuleSet({});
     const detail = formulaDetail([step(0, 'APPLY_FLAT_RATE', 'NOT_A_REAL_STATE_RULE_KEY')]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -200,7 +200,7 @@ describe('APPLY_FLAT_RATE — operandRef validation', () => {
     });
     const detail = formulaDetail([step(0, 'APPLY_FLAT_RATE', otherRateKey)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -213,7 +213,7 @@ describe('APPLY_FLAT_RATE — referenced rule missing/unverified/malformed', () 
     const ruleSet = buildRuleSet({});
     const detail = formulaDetail([step(0, 'APPLY_FLAT_RATE', RATE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -228,7 +228,7 @@ describe('APPLY_FLAT_RATE — referenced rule missing/unverified/malformed', () 
     });
     const detail = formulaDetail([step(0, 'APPLY_FLAT_RATE', RATE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -247,7 +247,7 @@ describe('APPLY_FLAT_RATE — referenced rule missing/unverified/malformed', () 
     });
     const detail = formulaDetail([step(0, 'APPLY_FLAT_RATE', RATE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -265,7 +265,7 @@ describe('APPLY_FLAT_RATE — referenced rule missing/unverified/malformed', () 
     });
     const detail = formulaDetail([step(0, 'APPLY_FLAT_RATE', RATE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -280,7 +280,7 @@ describe('APPLY_FLAT_RATE — null rate', () => {
     });
     const detail = formulaDetail([step(0, 'APPLY_FLAT_RATE', RATE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -298,7 +298,7 @@ describe('APPLY_FLAT_RATE — applicability and appliesTo (owner-locked, Task 4O
     });
     const detail = formulaDetail([step(0, 'APPLY_FLAT_RATE', RATE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -311,7 +311,7 @@ describe('APPLY_FLAT_RATE — applicability and appliesTo (owner-locked, Task 4O
     });
     const detail = formulaDetail([step(0, 'APPLY_FLAT_RATE', RATE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -327,7 +327,7 @@ describe('APPLY_FLAT_RATE — applicability and appliesTo (owner-locked, Task 4O
     });
     const detail = formulaDetail([step(0, 'APPLY_FLAT_RATE', RATE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -344,7 +344,15 @@ describe('APPLY_FLAT_RATE — precision', () => {
 
     // 10.005 * 0.1 === 1.0005 exactly; naive IEEE-754 float arithmetic would
     // produce 1.0005000000000002.
-    const result = runStateWithholdingFormula(detail, ruleSet, money('10.005'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('10.005'),
+      SINGLE,
+      {},
+      {},
+      null,
+    );
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -367,7 +375,7 @@ describe('APPLY_FLAT_RATE — sequential accumulator behavior', () => {
       step(1, 'APPLY_FLAT_RATE', RATE_KEY),
     ]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');

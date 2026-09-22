@@ -132,6 +132,7 @@ describe('SUBTRACT_ALLOWANCES — arithmetic', () => {
         [ALLOWANCE_KEY]: 1,
       },
       {},
+      null,
     );
 
     expect(result.ok).toBe(true);
@@ -155,6 +156,7 @@ describe('SUBTRACT_ALLOWANCES — arithmetic', () => {
         [ALLOWANCE_KEY]: 4,
       },
       {},
+      null,
     );
 
     expect(result.ok).toBe(true);
@@ -178,6 +180,7 @@ describe('SUBTRACT_ALLOWANCES — arithmetic', () => {
         [ALLOWANCE_KEY]: 0,
       },
       {},
+      null,
     );
 
     expect(result.ok).toBe(true);
@@ -211,6 +214,7 @@ describe('SUBTRACT_ALLOWANCES — sequential accumulator behavior', () => {
         [ALLOWANCE_KEY]: 2,
       },
       {},
+      null,
     );
 
     expect(result.ok).toBe(true);
@@ -227,7 +231,7 @@ describe('SUBTRACT_ALLOWANCES — allowance count resolution', () => {
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_ALLOWANCES', ALLOWANCE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -249,6 +253,7 @@ describe('SUBTRACT_ALLOWANCES — allowance count resolution', () => {
         [ALLOWANCE_KEY]: null,
       },
       {},
+      null,
     );
 
     expect(result.ok).toBe(false);
@@ -275,6 +280,7 @@ describe('SUBTRACT_ALLOWANCES — allowance count resolution', () => {
         [ALLOWANCE_KEY]: -1,
       },
       {},
+      null,
     );
 
     expect(result.ok).toBe(true);
@@ -299,6 +305,7 @@ describe('SUBTRACT_ALLOWANCES — allowance count resolution', () => {
         [ALLOWANCE_KEY]: 1.5,
       },
       {},
+      null,
     );
 
     expect(result.ok).toBe(true);
@@ -324,6 +331,7 @@ describe('SUBTRACT_ALLOWANCES — allowance count resolution', () => {
         [OTHER_KEY]: 99,
       },
       {},
+      null,
     );
 
     expect(result.ok).toBe(true);
@@ -352,6 +360,7 @@ describe('SUBTRACT_ALLOWANCES — allowance count resolution', () => {
         [OTHER_KEY]: 99,
       },
       {},
+      null,
     );
 
     expect(result.ok).toBe(true);
@@ -369,7 +378,7 @@ describe('SUBTRACT_ALLOWANCES — operandRef validation', () => {
     const ruleSet = buildRuleSet({});
     const detail = formulaDetail([step(0, 'SUBTRACT_ALLOWANCES', null)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -380,7 +389,7 @@ describe('SUBTRACT_ALLOWANCES — operandRef validation', () => {
     const ruleSet = buildRuleSet({});
     const detail = formulaDetail([step(0, 'SUBTRACT_ALLOWANCES', 'NOT_A_REAL_STATE_RULE_KEY')]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -402,6 +411,7 @@ describe('SUBTRACT_ALLOWANCES — referenced rule missing/unverified/malformed',
         [ALLOWANCE_KEY]: 1,
       },
       {},
+      null,
     );
 
     expect(result.ok).toBe(false);
@@ -426,6 +436,7 @@ describe('SUBTRACT_ALLOWANCES — referenced rule missing/unverified/malformed',
         [ALLOWANCE_KEY]: 1,
       },
       {},
+      null,
     );
 
     expect(result.ok).toBe(false);
@@ -454,6 +465,7 @@ describe('SUBTRACT_ALLOWANCES — referenced rule missing/unverified/malformed',
         [ALLOWANCE_KEY]: 1,
       },
       {},
+      null,
     );
 
     expect(result.ok).toBe(false);
@@ -478,6 +490,7 @@ describe('SUBTRACT_ALLOWANCES — null amount', () => {
         [ALLOWANCE_KEY]: 1,
       },
       {},
+      null,
     );
 
     expect(result.ok).toBe(false);
@@ -500,6 +513,7 @@ describe('SUBTRACT_ALLOWANCES — null amount', () => {
         [ALLOWANCE_KEY]: 5,
       },
       {},
+      null,
     );
 
     expect(result.ok).toBe(true);
@@ -522,6 +536,7 @@ describe('SUBTRACT_ALLOWANCES — null amount', () => {
         [ALLOWANCE_KEY]: 2,
       },
       {},
+      null,
     );
 
     expect(result.ok).toBe(true);
@@ -552,6 +567,7 @@ describe('SUBTRACT_ALLOWANCES — applicability (owner-locked, Task 4O-6R17)', (
         [ALLOWANCE_KEY]: 1,
       },
       {},
+      null,
     );
 
     expect(result.ok).toBe(false);
@@ -579,6 +595,7 @@ describe('SUBTRACT_ALLOWANCES — unit is not converted', () => {
         [ALLOWANCE_KEY]: 3,
       },
       {},
+      null,
     );
 
     expect(result.ok).toBe(true);
@@ -605,6 +622,7 @@ describe('SUBTRACT_ALLOWANCES — precision', () => {
         [ALLOWANCE_KEY]: 3,
       },
       {},
+      null,
     );
 
     expect(result.ok).toBe(true);

@@ -114,7 +114,7 @@ describe('SUBTRACT_AMOUNT — operandRef validation', () => {
     const ruleSet = buildRuleSet({});
     const detail = formulaDetail([step(0, 'SUBTRACT_AMOUNT', null)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -125,7 +125,7 @@ describe('SUBTRACT_AMOUNT — operandRef validation', () => {
     const ruleSet = buildRuleSet({});
     const detail = formulaDetail([step(0, 'SUBTRACT_AMOUNT', 'NOT_A_REAL_STATE_RULE_KEY')]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -139,7 +139,7 @@ describe('SUBTRACT_AMOUNT — operandRef validation', () => {
     const ruleSet = buildRuleSet({});
     const detail = formulaDetail([step(0, 'SUBTRACT_AMOUNT', 'extra_withholding_amount')]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -152,7 +152,7 @@ describe('SUBTRACT_AMOUNT — referenced rule missing', () => {
     const ruleSet = buildRuleSet({});
     const detail = formulaDetail([step(0, 'SUBTRACT_AMOUNT', StateRuleKey.PIT_FLAT_RATE)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -178,7 +178,7 @@ describe('SUBTRACT_AMOUNT — referenced rule unverified', () => {
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_AMOUNT', key)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -200,7 +200,7 @@ describe('SUBTRACT_AMOUNT — referenced rule has the wrong detail shape', () =>
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_AMOUNT', key)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -218,7 +218,7 @@ describe('SUBTRACT_AMOUNT — referenced rule has the wrong detail shape', () =>
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_AMOUNT', key)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -240,7 +240,7 @@ describe('SUBTRACT_AMOUNT — referenced rule has the wrong detail shape', () =>
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_AMOUNT', key)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -257,7 +257,7 @@ describe('SUBTRACT_AMOUNT — formula dispatch wiring', () => {
     const ruleSet = buildRuleSet({});
     const detail = formulaDetail([step(0, 'SUBTRACT_AMOUNT', null)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('500'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('500'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -272,7 +272,7 @@ describe('SUBTRACT_AMOUNT — formula dispatch wiring', () => {
       step(1, 'FLOOR_AT_ZERO'),
     ]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -285,7 +285,7 @@ describe('SUBTRACT_AMOUNT — unrelated operations remain unaffected', () => {
     const ruleSet = buildRuleSet({});
     const detail = formulaDetail([step(0, 'ROUND')]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {}, null);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
