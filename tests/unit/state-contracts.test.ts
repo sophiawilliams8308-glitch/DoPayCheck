@@ -9,6 +9,7 @@ import {
   type ResolvedStateRuleSet,
 } from '@/lib/tax/state/rules/stateRuleSet';
 import {
+  resolveWorkJurisdictionElections,
   soleWorkJurisdiction,
   stateYtdAssumedZero,
   validateStateContext,
@@ -278,11 +279,237 @@ describe('state context', () => {
     expect(issues[0]?.message).toContain('ANNUAL or PER_PERIOD');
   });
 
+  describe('duplicate election fieldKey', () => {
+    it('accepts unique fieldKeys within one jurisdiction', () => {
+      const issues = validateStateContext(
+        context({
+          elections: {
+            [TEST_WORK]: {
+              formCode: 'SYNTHETIC-FORM',
+              filingStatus: null,
+              values: [
+                { fieldKey: 'additionalAmount', value: '10', unit: 'PER_PERIOD' },
+                { fieldKey: 'allowances', value: 2 },
+              ],
+            },
+          },
+        }),
+      );
+      expect(issues).toEqual([]);
+    });
+
+    it('rejects a duplicate fieldKey within one jurisdiction as INPUT_INVALID', () => {
+      const issues = validateStateContext(
+        context({
+          elections: {
+            [TEST_WORK]: {
+              formCode: 'SYNTHETIC-FORM',
+              filingStatus: null,
+              values: [
+                { fieldKey: 'additionalAmount', value: '10', unit: 'PER_PERIOD' },
+                { fieldKey: 'additionalAmount', value: '20', unit: 'PER_PERIOD' },
+              ],
+            },
+          },
+        }),
+      );
+      expect(issues.length).toBe(1);
+      expect(issues[0]?.kind).toBe('INPUT_INVALID');
+      expect(issues[0]?.message).toContain('Duplicate election fieldKey');
+      expect(issues[0]?.path).toBe(`elections.${TEST_WORK}.additionalAmount`);
+    });
+
+    it('detects duplicates independently per jurisdiction', () => {
+      const issues = validateStateContext(
+        context({
+          elections: {
+            [TEST_WORK]: {
+              formCode: 'SYNTHETIC-FORM',
+              filingStatus: null,
+              values: [
+                { fieldKey: 'additionalAmount', value: '10', unit: 'PER_PERIOD' },
+                { fieldKey: 'additionalAmount', value: '20', unit: 'PER_PERIOD' },
+              ],
+            },
+            [TEST_RESIDENCE]: {
+              formCode: 'OTHER-SYNTHETIC-FORM',
+              filingStatus: null,
+              values: [{ fieldKey: 'otherAmount', value: '5', unit: 'ANNUAL' }],
+            },
+          },
+        }),
+      );
+      // Only the work jurisdiction's own duplicate is reported; the
+      // residence jurisdiction's distinct, non-duplicated values are unaffected.
+      expect(issues.length).toBe(1);
+      expect(issues[0]?.path).toBe(`elections.${TEST_WORK}.additionalAmount`);
+    });
+
+    it('allows the same fieldKey to appear once in each of two different jurisdictions', () => {
+      const issues = validateStateContext(
+        context({
+          elections: {
+            [TEST_WORK]: {
+              formCode: 'SYNTHETIC-FORM',
+              filingStatus: null,
+              values: [{ fieldKey: 'additionalAmount', value: '10', unit: 'PER_PERIOD' }],
+            },
+            [TEST_RESIDENCE]: {
+              formCode: 'OTHER-SYNTHETIC-FORM',
+              filingStatus: null,
+              values: [{ fieldKey: 'additionalAmount', value: '5', unit: 'ANNUAL' }],
+            },
+          },
+        }),
+      );
+      expect(issues).toEqual([]);
+    });
+
+    it('does not mutate the original values[] array while detecting duplicates', () => {
+      const values = [
+        { fieldKey: 'additionalAmount', value: '10', unit: 'PER_PERIOD' as const },
+        { fieldKey: 'additionalAmount', value: '20', unit: 'PER_PERIOD' as const },
+      ];
+      const before = [...values];
+
+      validateStateContext(
+        context({
+          elections: {
+            [TEST_WORK]: { formCode: 'SYNTHETIC-FORM', filingStatus: null, values },
+          },
+        }),
+      );
+
+      expect(values).toEqual(before);
+      expect(values.length).toBe(2);
+    });
+
+    it('still reports the existing unit requirement alongside duplicate detection', () => {
+      const issues = validateStateContext(
+        context({
+          elections: {
+            [TEST_WORK]: {
+              formCode: 'SYNTHETIC-FORM',
+              filingStatus: null,
+              values: [
+                { fieldKey: 'additionalAmount', value: '10' },
+                { fieldKey: 'additionalAmount', value: '20' },
+              ],
+            },
+          },
+        }),
+      );
+      expect(issues.length).toBe(3);
+      expect(issues.filter((issue) => issue.message.includes('ANNUAL or PER_PERIOD'))).toHaveLength(
+        2,
+      );
+      expect(
+        issues.filter((issue) => issue.message.includes('Duplicate election fieldKey')),
+      ).toHaveLength(1);
+    });
+  });
+
   it('carries YTD that excludes the current period, and flags an assumed zero', () => {
     const ytd = stateYtdAssumedZero();
     expect(ytd.assumedZero).toBe(true);
     // Zero is permitted but must be visible; a silent zero would misstate every
     // mid-year paycheck that crosses a wage base.
     expect(ytd.sdiWages).toBe('0');
+  });
+
+  describe('resolveWorkJurisdictionElections', () => {
+    it('resolves the work jurisdiction election values, keyed by fieldKey', () => {
+      const resolved = resolveWorkJurisdictionElections(
+        context({
+          elections: {
+            [TEST_WORK]: {
+              formCode: 'SYNTHETIC-FORM',
+              filingStatus: null,
+              values: [
+                { fieldKey: 'additionalAmount', value: '10', unit: 'PER_PERIOD' },
+                { fieldKey: 'allowances', value: 2 },
+              ],
+            },
+          },
+        }),
+      );
+
+      expect(resolved).toEqual({
+        additionalAmount: { fieldKey: 'additionalAmount', value: '10', unit: 'PER_PERIOD' },
+        allowances: { fieldKey: 'allowances', value: 2 },
+      });
+    });
+
+    it('never resolves the residence jurisdiction, even when it carries elections', () => {
+      const resolved = resolveWorkJurisdictionElections(
+        context({
+          elections: {
+            [TEST_RESIDENCE]: {
+              formCode: 'RESIDENCE-FORM',
+              filingStatus: null,
+              values: [{ fieldKey: 'additionalAmount', value: '999', unit: 'ANNUAL' }],
+            },
+          },
+        }),
+      );
+
+      expect(resolved).toEqual({});
+    });
+
+    it('resolves an empty map when the work jurisdiction has no election object', () => {
+      const resolved = resolveWorkJurisdictionElections(context({ elections: {} }));
+      expect(resolved).toEqual({});
+    });
+
+    it('preserves fieldKey, value, and unit exactly as submitted', () => {
+      const resolved = resolveWorkJurisdictionElections(
+        context({
+          elections: {
+            [TEST_WORK]: {
+              formCode: 'SYNTHETIC-FORM',
+              filingStatus: null,
+              values: [{ fieldKey: 'flag', value: true }],
+            },
+          },
+        }),
+      );
+
+      expect(resolved.flag).toEqual({ fieldKey: 'flag', value: true });
+    });
+
+    it('does not mutate the source values[] array', () => {
+      const values = [{ fieldKey: 'additionalAmount', value: '10', unit: 'PER_PERIOD' as const }];
+      const before = [...values];
+
+      resolveWorkJurisdictionElections(
+        context({
+          elections: {
+            [TEST_WORK]: { formCode: 'SYNTHETIC-FORM', filingStatus: null, values },
+          },
+        }),
+      );
+
+      expect(values).toEqual(before);
+    });
+
+    it('resolves multiple distinct election fields correctly', () => {
+      const resolved = resolveWorkJurisdictionElections(
+        context({
+          elections: {
+            [TEST_WORK]: {
+              formCode: 'SYNTHETIC-FORM',
+              filingStatus: null,
+              values: [
+                { fieldKey: 'additionalAmount', value: '10', unit: 'PER_PERIOD' },
+                { fieldKey: 'allowances', value: 3 },
+                { fieldKey: 'exempt', value: false },
+              ],
+            },
+          },
+        }),
+      );
+
+      expect(Object.keys(resolved).sort()).toEqual(['additionalAmount', 'allowances', 'exempt']);
+    });
   });
 });

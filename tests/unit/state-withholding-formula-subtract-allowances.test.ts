@@ -123,9 +123,16 @@ describe('SUBTRACT_ALLOWANCES — arithmetic', () => {
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_ALLOWANCES', ALLOWANCE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {
-      [ALLOWANCE_KEY]: 1,
-    });
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('1000'),
+      SINGLE,
+      {
+        [ALLOWANCE_KEY]: 1,
+      },
+      {},
+    );
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -139,9 +146,16 @@ describe('SUBTRACT_ALLOWANCES — arithmetic', () => {
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_ALLOWANCES', ALLOWANCE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {
-      [ALLOWANCE_KEY]: 4,
-    });
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('1000'),
+      SINGLE,
+      {
+        [ALLOWANCE_KEY]: 4,
+      },
+      {},
+    );
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -155,9 +169,16 @@ describe('SUBTRACT_ALLOWANCES — arithmetic', () => {
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_ALLOWANCES', ALLOWANCE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {
-      [ALLOWANCE_KEY]: 0,
-    });
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('1000'),
+      SINGLE,
+      {
+        [ALLOWANCE_KEY]: 0,
+      },
+      {},
+    );
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -181,9 +202,16 @@ describe('SUBTRACT_ALLOWANCES — sequential accumulator behavior', () => {
       step(1, 'SUBTRACT_ALLOWANCES', ALLOWANCE_KEY),
     ]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {
-      [ALLOWANCE_KEY]: 2,
-    });
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('1000'),
+      SINGLE,
+      {
+        [ALLOWANCE_KEY]: 2,
+      },
+      {},
+    );
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -199,7 +227,7 @@ describe('SUBTRACT_ALLOWANCES — allowance count resolution', () => {
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_ALLOWANCES', ALLOWANCE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -212,9 +240,16 @@ describe('SUBTRACT_ALLOWANCES — allowance count resolution', () => {
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_ALLOWANCES', ALLOWANCE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {
-      [ALLOWANCE_KEY]: null,
-    });
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('1000'),
+      SINGLE,
+      {
+        [ALLOWANCE_KEY]: null,
+      },
+      {},
+    );
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -231,9 +266,16 @@ describe('SUBTRACT_ALLOWANCES — allowance count resolution', () => {
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_ALLOWANCES', ALLOWANCE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {
-      [ALLOWANCE_KEY]: -1,
-    });
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('1000'),
+      SINGLE,
+      {
+        [ALLOWANCE_KEY]: -1,
+      },
+      {},
+    );
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -248,9 +290,16 @@ describe('SUBTRACT_ALLOWANCES — allowance count resolution', () => {
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_ALLOWANCES', ALLOWANCE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {
-      [ALLOWANCE_KEY]: 1.5,
-    });
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('1000'),
+      SINGLE,
+      {
+        [ALLOWANCE_KEY]: 1.5,
+      },
+      {},
+    );
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -265,10 +314,17 @@ describe('SUBTRACT_ALLOWANCES — allowance count resolution', () => {
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_ALLOWANCES', ALLOWANCE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {
-      [ALLOWANCE_KEY]: 2,
-      [OTHER_KEY]: 99,
-    });
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('1000'),
+      SINGLE,
+      {
+        [ALLOWANCE_KEY]: 2,
+        [OTHER_KEY]: 99,
+      },
+      {},
+    );
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -286,10 +342,17 @@ describe('SUBTRACT_ALLOWANCES — allowance count resolution', () => {
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_ALLOWANCES', ALLOWANCE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {
-      [ALLOWANCE_KEY]: 3,
-      [OTHER_KEY]: 99,
-    });
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('1000'),
+      SINGLE,
+      {
+        [ALLOWANCE_KEY]: 3,
+        [OTHER_KEY]: 99,
+      },
+      {},
+    );
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -306,7 +369,7 @@ describe('SUBTRACT_ALLOWANCES — operandRef validation', () => {
     const ruleSet = buildRuleSet({});
     const detail = formulaDetail([step(0, 'SUBTRACT_ALLOWANCES', null)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -317,7 +380,7 @@ describe('SUBTRACT_ALLOWANCES — operandRef validation', () => {
     const ruleSet = buildRuleSet({});
     const detail = formulaDetail([step(0, 'SUBTRACT_ALLOWANCES', 'NOT_A_REAL_STATE_RULE_KEY')]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {});
+    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {});
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -330,9 +393,16 @@ describe('SUBTRACT_ALLOWANCES — referenced rule missing/unverified/malformed',
     const ruleSet = buildRuleSet({});
     const detail = formulaDetail([step(0, 'SUBTRACT_ALLOWANCES', ALLOWANCE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {
-      [ALLOWANCE_KEY]: 1,
-    });
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('1000'),
+      SINGLE,
+      {
+        [ALLOWANCE_KEY]: 1,
+      },
+      {},
+    );
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -347,9 +417,16 @@ describe('SUBTRACT_ALLOWANCES — referenced rule missing/unverified/malformed',
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_ALLOWANCES', ALLOWANCE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {
-      [ALLOWANCE_KEY]: 1,
-    });
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('1000'),
+      SINGLE,
+      {
+        [ALLOWANCE_KEY]: 1,
+      },
+      {},
+    );
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -368,9 +445,16 @@ describe('SUBTRACT_ALLOWANCES — referenced rule missing/unverified/malformed',
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_ALLOWANCES', ALLOWANCE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {
-      [ALLOWANCE_KEY]: 1,
-    });
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('1000'),
+      SINGLE,
+      {
+        [ALLOWANCE_KEY]: 1,
+      },
+      {},
+    );
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -385,9 +469,16 @@ describe('SUBTRACT_ALLOWANCES — null amount', () => {
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_ALLOWANCES', ALLOWANCE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {
-      [ALLOWANCE_KEY]: 1,
-    });
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('1000'),
+      SINGLE,
+      {
+        [ALLOWANCE_KEY]: 1,
+      },
+      {},
+    );
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -400,9 +491,16 @@ describe('SUBTRACT_ALLOWANCES — null amount', () => {
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_ALLOWANCES', ALLOWANCE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {
-      [ALLOWANCE_KEY]: 5,
-    });
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('1000'),
+      SINGLE,
+      {
+        [ALLOWANCE_KEY]: 5,
+      },
+      {},
+    );
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -415,9 +513,16 @@ describe('SUBTRACT_ALLOWANCES — null amount', () => {
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_ALLOWANCES', ALLOWANCE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {
-      [ALLOWANCE_KEY]: 2,
-    });
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('1000'),
+      SINGLE,
+      {
+        [ALLOWANCE_KEY]: 2,
+      },
+      {},
+    );
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -438,9 +543,16 @@ describe('SUBTRACT_ALLOWANCES — applicability (owner-locked, Task 4O-6R17)', (
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_ALLOWANCES', ALLOWANCE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {
-      [ALLOWANCE_KEY]: 1,
-    });
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('1000'),
+      SINGLE,
+      {
+        [ALLOWANCE_KEY]: 1,
+      },
+      {},
+    );
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -458,9 +570,16 @@ describe('SUBTRACT_ALLOWANCES — unit is not converted', () => {
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_ALLOWANCES', ALLOWANCE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {
-      [ALLOWANCE_KEY]: 3,
-    });
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('1000'),
+      SINGLE,
+      {
+        [ALLOWANCE_KEY]: 3,
+      },
+      {},
+    );
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -477,9 +596,16 @@ describe('SUBTRACT_ALLOWANCES — precision', () => {
     });
     const detail = formulaDetail([step(0, 'SUBTRACT_ALLOWANCES', ALLOWANCE_KEY)]);
 
-    const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {
-      [ALLOWANCE_KEY]: 3,
-    });
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('1000'),
+      SINGLE,
+      {
+        [ALLOWANCE_KEY]: 3,
+      },
+      {},
+    );
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');

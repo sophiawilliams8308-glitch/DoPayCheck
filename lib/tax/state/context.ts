@@ -193,7 +193,8 @@ export function validateStateContext(
     });
   }
 
-  for (const election of Object.values(context.elections)) {
+  for (const [jurisdictionCode, election] of Object.entries(context.elections)) {
+    const seenFieldKeys = new Set<string>();
     for (const value of election.values) {
       if (typeof value.value === 'string' && value.unit === undefined) {
         issues.push({
@@ -201,6 +202,25 @@ export function validateStateContext(
           message: 'An amount election must declare its unit as ANNUAL or PER_PERIOD',
           kind: 'INPUT_INVALID',
         });
+      }
+
+      // Detected independently per jurisdiction: the same fieldKey may
+      // legitimately appear once in each of two different jurisdictions'
+      // own elections, but never twice within one jurisdiction's own
+      // values[]. Neither duplicate is preferred over the other — the
+      // array itself is never deduplicated, mutated, or reordered; this
+      // only records that a deterministic lookup by fieldKey would be
+      // ambiguous.
+      if (seenFieldKeys.has(value.fieldKey)) {
+        issues.push({
+          path: `elections.${jurisdictionCode}.${value.fieldKey}`,
+          message:
+            `Duplicate election fieldKey "${value.fieldKey}" for jurisdiction ` +
+            `${jurisdictionCode}; a fieldKey must appear at most once per jurisdiction's elections`,
+          kind: 'INPUT_INVALID',
+        });
+      } else {
+        seenFieldKeys.add(value.fieldKey);
       }
     }
   }
@@ -216,6 +236,40 @@ export function soleWorkJurisdiction(
     return null;
   }
   return context.workJurisdictions[0] ?? null;
+}
+
+/**
+ * Resolves the current WORK jurisdiction's submitted election values into a
+ * narrow, `fieldKey`-keyed map — `ADD_AMOUNT`'s (Task 4O-6R23) interpreter
+ * input. Never the residence jurisdiction: mirrors `resolutionContext.ts`'s
+ * own existing `calcContext.elections[workJurisdiction]` precedent exactly,
+ * reading the first `workJurisdictions` entry the same way.
+ *
+ * Pure passthrough: `fieldKey`, `value`, and `unit` are preserved exactly as
+ * submitted — no form-schema validation, no unit conversion, no arithmetic,
+ * and no deduplication. A duplicate `fieldKey` within one jurisdiction's
+ * `values[]` is expected to already have been rejected by
+ * `validateStateContext()` before this function is ever called; this
+ * function does not itself detect or arbitrate one.
+ *
+ * No work jurisdiction, or no election object recorded for it, resolves to
+ * an empty map — the same "not supplied" convention `allowanceCounts` and
+ * `taxabilityProfiles` already use elsewhere on this context.
+ */
+export function resolveWorkJurisdictionElections(
+  context: StateCalculationContext,
+): Readonly<Partial<Record<string, StateElectionValue | null>>> {
+  const work = context.workJurisdictions[0];
+  if (work === undefined) {
+    return {};
+  }
+
+  const election = context.elections[work.jurisdictionCode];
+  if (election === undefined) {
+    return {};
+  }
+
+  return Object.fromEntries(election.values.map((value) => [value.fieldKey, value] as const));
 }
 
 /** YTD with every figure zero, flagged as assumed. Zero is DISCLOSED, never silent. */

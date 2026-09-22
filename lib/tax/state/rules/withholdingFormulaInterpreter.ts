@@ -1,11 +1,23 @@
-import { compare, max, money, multiply, subtract, sum, zero, type Money } from '@/lib/core/money';
+import {
+  add,
+  compare,
+  max,
+  money,
+  multiply,
+  subtract,
+  sum,
+  zero,
+  type Money,
+} from '@/lib/core/money';
 
 import { StateReason, stateUnavailable, type StateUnavailable } from '../errors/stateErrors';
 import { StateRuleKey } from '../ruleKeys';
+import type { StateElectionValue } from '../context';
 import type {
   StateAmountByFilingStatusDetail,
   StateAmountPerAllowanceDetail,
   StateBracketTableDetail,
+  StateElectionFormSchemaDetail,
   StateFormulaStepsDetail,
   StateRateDetail,
   StateScalarAmountDetail,
@@ -23,10 +35,10 @@ import type { ResolvedStateRuleSet } from './stateRuleSet';
 
 /**
  * State withholding formula interpreter — Task 4O-3A, extended by Tasks
- * 4O-5, 4O-6R6, 4O-6R12, and 4O-6R17.
+ * 4O-5, 4O-6R6, 4O-6R12, 4O-6R17, and 4O-6R23.
  *
  * ===========================================================================
- * IMPLEMENTS SEVEN OPERATIONS: THE THREE TASK 4O-2 CONTRACT-LOCKED ONES
+ * IMPLEMENTS EIGHT OPERATIONS: THE THREE TASK 4O-2 CONTRACT-LOCKED ONES
  * (`SUBTRACT_STANDARD_DEDUCTION`, `FLOOR_AT_ZERO`, `APPLY_BRACKETS`), PLUS
  * `SUBTRACT_EXEMPTIONS`'S PERSONAL-EXEMPTION PATH ONLY (Task 4O-4/4O-5),
  * PLUS `SUBTRACT_AMOUNT` (Task 4O-6R3/4O-6R4/4O-6R5/4O-6R6) — a GENERIC
@@ -36,7 +48,11 @@ import type { ResolvedStateRuleSet } from './stateRuleSet';
  * any `RATE`-shaped `StateRuleKey` — PLUS `SUBTRACT_ALLOWANCES` (Task
  * 4O-6R14/4O-6R15/4O-6R16/4O-6R17), generic over any `AMOUNT_PER_ALLOWANCE`-
  * shaped `StateRuleKey`, consuming an already-resolved, `StateRuleKey`-keyed
- * allowance-count map this function now receives as its fifth parameter.
+ * allowance-count map this function receives as its fifth parameter — PLUS
+ * `ADD_AMOUNT` (Task 4O-6R20/4O-6R21/4O-6R22/4O-6R23), generic over any
+ * `AMOUNT`-typed field the current WORK jurisdiction's `WITHHOLDING_ELECTION_FORM`
+ * declares, consuming an already-resolved, `fieldKey`-keyed employee-election
+ * map this function receives as its sixth parameter.
  *
  * `SUBTRACT_EXEMPTIONS` supports ONLY `operandRef ===
  * StateRuleKey.PIT_PERSONAL_EXEMPTION`. The dependent-exemption path
@@ -44,10 +60,10 @@ import type { ResolvedStateRuleSet } from './stateRuleSet';
  * other operandRef, to `SUBTRACT_EXEMPTIONS` fails `RULE_DETAIL_INVALID`
  * rather than being tolerated or treated as merely unsupported.
  *
- * The remaining five operations (`ADD_AMOUNT`, `APPLY_PERCENTAGE_OF`,
- * `ANNUALIZE`, `DEANNUALIZE`, `ROUND`) remain contractually unresolved
- * (Task 4O-2 §3/§8) and are never silently executed — encountering one
- * reports `METHOD_NOT_IMPLEMENTED`, mirroring the exact, already-established
+ * The remaining four operations (`APPLY_PERCENTAGE_OF`, `ANNUALIZE`,
+ * `DEANNUALIZE`, `ROUND`) remain contractually unresolved (Task 4O-2 §3/§8)
+ * and are never silently executed — encountering one reports
+ * `METHOD_NOT_IMPLEMENTED`, mirroring the exact, already-established
  * meaning of that reason elsewhere in the project
  * (`lib/calculator/pipeline/tax-stages.ts`'s `evaluateComponent()`: "the
  * calculation methodology for this category is delivered in a later phase").
@@ -58,8 +74,10 @@ import type { ResolvedStateRuleSet } from './stateRuleSet';
  * the current accumulator and, for `APPLY_BRACKETS`, one named `StateRuleKey`.
  *
  * `operandRef` vocabulary (Task 4O-2 §2, locked): a non-null `operandRef`
- * names a `StateRuleKey` and nothing else — no context-field-name
- * convention is supported.
+ * names a `StateRuleKey` for every operation EXCEPT `ADD_AMOUNT`, which is a
+ * later, separately-locked, deliberate exception (Task 4O-6R21 §3/§4, Task
+ * 4O-6R22): its `operandRef` names an election `fieldKey` instead, and is
+ * never checked against `VALID_RULE_KEYS`.
  *
  * Filing status (Task 4O-2 §5): used state-native, directly, exactly as
  * `StateCalculationContext.elections[...].filingStatus` carries it — never
@@ -591,27 +609,163 @@ function subtractAllowances(
 }
 
 /**
+ * `ADD_AMOUNT` — Task 4O-6R21/4O-6R22/4O-6R23 contract-locked, GENERIC OVER
+ * `WITHHOLDING_ELECTION_FORM`'S DECLARED `AMOUNT` FIELDS.
+ *
+ * Unlike every other operand-referencing operation in this module,
+ * `operandRef` here is NOT a `StateRuleKey` — it is an election `fieldKey`
+ * (Task 4O-6R21 §3/§4 found no composite-identifier convention anywhere in
+ * the repository, and Task 4O-6R22 explicitly forbids treating an employee
+ * election as a `StateRuleKey`). It is therefore never checked against
+ * `VALID_RULE_KEYS`.
+ *
+ * Deep validation against the registered `WITHHOLDING_ELECTION_FORM` rule
+ * (Task 4O-6R22 Decision #2) reuses the existing `readDetail()` machinery
+ * exactly as every other operation already does — no new generic election
+ * reader is introduced. `operandRef` must name a field the resolved
+ * `ELECTION_FORM_SCHEMA` actually declares, and that field's declared `type`
+ * must be `AMOUNT`; anything else fails `RULE_DETAIL_INVALID`, mirroring
+ * `applyBrackets()`/`applyFlatRate()`/`subtractAllowances()`'s identical
+ * "resolved the wrong concept" pattern, generalized here to "resolved a
+ * non-existent or non-AMOUNT field."
+ *
+ * The submitted value itself is read from `resolvedElections` — an
+ * already-resolved, `fieldKey`-keyed map of the current WORK jurisdiction's
+ * election values (never residence — `resolveWorkJurisdictionElections()`,
+ * `lib/tax/state/context.ts`), passed in narrowly, exactly as
+ * `allowanceCounts` already is. A missing or `null` entry reports
+ * `COMPONENT_NOT_STATED` (Task 4O-6R22 §H). Duplicate `fieldKey`s are never
+ * this operation's concern: they are rejected upstream by
+ * `validateStateContext()` before a calculation ever reaches the
+ * interpreter (Task 4O-6R22 Decision #1) — this function does not attempt
+ * to detect one.
+ *
+ * The current input/context validation layers guarantee `value` is one of
+ * `DecimalString | number | boolean`, but never guarantee that a `number`/
+ * `boolean` value wasn't submitted under a `fieldKey` the form declares as
+ * `AMOUNT` (Task 4O-6R22 §G) — this operation therefore owns its own
+ * `typeof value === 'string'` check, failing `RULE_DETAIL_INVALID` on
+ * anything else, exactly as `subtractAmount()`/`subtractAllowances()` each
+ * own their own resolved-detail shape check rather than trusting an earlier
+ * layer.
+ *
+ * `unit` is never converted (the same standing, disclosed, project-wide gap
+ * every other amount-bearing operation in this interpreter already
+ * carries) — but per Task 4O-6R22 Decision #3, the form's DECLARED unit and
+ * the submitted value's OWN unit must agree, or this reports `RULE_CONFLICT`
+ * (CLAUDE.md §3: conflicting sources are never silently resolved). Neither
+ * unit is ever preferred over the other, and no annualize/deannualize
+ * conversion is performed in either branch.
+ */
+function addAmount(
+  ruleSet: ResolvedStateRuleSet,
+  operandRef: string | null,
+  runningValue: Money,
+  resolvedElections: Readonly<Partial<Record<string, StateElectionValue | null>>>,
+): Read<Money> {
+  if (operandRef === null) {
+    return readFail(
+      invalidDetail('ADD_AMOUNT requires a non-null operandRef naming an election fieldKey'),
+    );
+  }
+
+  const found = readDetail(ruleSet, StateRuleKey.WITHHOLDING_ELECTION_FORM);
+  if (!found.ok) {
+    return readFail(found.problem);
+  }
+
+  const detail = found.value.detail as { shape: string };
+  if (detail.shape !== 'ELECTION_FORM_SCHEMA') {
+    return readFail(
+      invalidDetail(
+        `ADD_AMOUNT resolved a "${detail.shape}" rule for ${StateRuleKey.WITHHOLDING_ELECTION_FORM}, ` +
+          'not an ELECTION_FORM_SCHEMA',
+      ),
+    );
+  }
+  const formDetail = found.value.detail as StateElectionFormSchemaDetail;
+
+  const field = formDetail.fields.find((candidate) => candidate.fieldKey === operandRef);
+  if (field === undefined) {
+    return readFail(
+      invalidDetail(
+        `ADD_AMOUNT operandRef "${operandRef}" does not name a field declared by ` +
+          `${StateRuleKey.WITHHOLDING_ELECTION_FORM}`,
+      ),
+    );
+  }
+
+  if (field.type !== 'AMOUNT') {
+    return readFail(
+      invalidDetail(
+        `ADD_AMOUNT operandRef "${operandRef}" names a field declared as "${field.type}", not AMOUNT`,
+      ),
+    );
+  }
+
+  const election = resolvedElections[operandRef];
+  if (election === undefined || election === null) {
+    return readFail(
+      stateUnavailable(
+        StateReason.COMPONENT_NOT_STATED,
+        `ADD_AMOUNT operandRef "${operandRef}" has no submitted election value; it is not stated, ` +
+          'and none is assumed',
+        StateRuleKey.WITHHOLDING_ELECTION_FORM,
+        operandRef,
+      ),
+    );
+  }
+
+  if (typeof election.value !== 'string') {
+    return readFail(
+      invalidDetail(
+        `ADD_AMOUNT operandRef "${operandRef}" resolved a submitted value of type ` +
+          `"${typeof election.value}", not a DecimalString`,
+      ),
+    );
+  }
+
+  if (field.unit !== election.unit) {
+    return readFail(
+      stateUnavailable(
+        StateReason.RULE_CONFLICT,
+        `ADD_AMOUNT operandRef "${operandRef}" declares unit "${String(field.unit)}" on ` +
+          `${StateRuleKey.WITHHOLDING_ELECTION_FORM}, but the submitted election value declares ` +
+          `unit "${String(election.unit)}"; the conflict is never silently resolved`,
+        StateRuleKey.WITHHOLDING_ELECTION_FORM,
+        operandRef,
+      ),
+    );
+  }
+
+  return readOk(add(runningValue, money(election.value)));
+}
+
+/**
  * Runs a `WITHHOLDING_FORMULA`'s steps, in ascending `ordinal` order, over a
  * single running accumulator, starting from `initialValue`.
  *
  * `SUBTRACT_STANDARD_DEDUCTION`, `FLOOR_AT_ZERO`, `APPLY_BRACKETS`,
  * `SUBTRACT_EXEMPTIONS` (personal-exemption path only), `SUBTRACT_AMOUNT`,
- * `APPLY_FLAT_RATE`, and `SUBTRACT_ALLOWANCES` are implemented. Any other
- * operation — including `SUBTRACT_EXEMPTIONS` with an operandRef other than
- * `PIT_PERSONAL_EXEMPTION`, or `SUBTRACT_AMOUNT`/`APPLY_FLAT_RATE`/
- * `SUBTRACT_ALLOWANCES` with an invalid operandRef — reports
- * `METHOD_NOT_IMPLEMENTED` or `RULE_DETAIL_INVALID` respectively, rather
- * than being silently skipped or executed. Duplicate ordinals are never
- * silently ordered — they report `RULE_CONFLICT`, mirroring
- * `selectStateWithholdingTableRow()`'s identical treatment of ambiguous,
- * contradictory rule data (Task 4N-R).
+ * `APPLY_FLAT_RATE`, `SUBTRACT_ALLOWANCES`, and `ADD_AMOUNT` are
+ * implemented. Any other operation — including `SUBTRACT_EXEMPTIONS` with an
+ * operandRef other than `PIT_PERSONAL_EXEMPTION`, or
+ * `SUBTRACT_AMOUNT`/`APPLY_FLAT_RATE`/`SUBTRACT_ALLOWANCES`/`ADD_AMOUNT`
+ * with an invalid operandRef — reports `METHOD_NOT_IMPLEMENTED` or
+ * `RULE_DETAIL_INVALID` respectively, rather than being silently skipped or
+ * executed. Duplicate ordinals are never silently ordered — they report
+ * `RULE_CONFLICT`, mirroring `selectStateWithholdingTableRow()`'s identical
+ * treatment of ambiguous, contradictory rule data (Task 4N-R).
  *
  * Pure, synchronous, DB-free: `ruleSet` is only read via `readDetail()`,
  * never mutated; `filingStatus` is read, never mutated or mapped;
  * `allowanceCounts` (Task 4O-6R17) is an already-resolved, narrow,
- * `StateRuleKey`-keyed map — never the whole `StateCalculationContext`, and
- * never parsed or validated here (that is the input/context layer's job,
- * Task 4O-6R16).
+ * `StateRuleKey`-keyed map; `resolvedElections` (Task 4O-6R23) is an
+ * already-resolved, narrow, `fieldKey`-keyed map of the current WORK
+ * jurisdiction's submitted election values (`resolveWorkJurisdictionElections()`,
+ * `lib/tax/state/context.ts`) — never the whole `StateCalculationContext`,
+ * and never parsed or validated here (that is the input/context layer's
+ * job, Tasks 4O-6R16/4O-6R22).
  */
 export function runStateWithholdingFormula(
   detail: StateFormulaStepsDetail,
@@ -619,6 +773,7 @@ export function runStateWithholdingFormula(
   initialValue: Money,
   filingStatus: string | null,
   allowanceCounts: Readonly<Partial<Record<StateRuleKey, number | null>>>,
+  resolvedElections: Readonly<Partial<Record<string, StateElectionValue | null>>>,
 ): Read<Money> {
   const ordinals = detail.steps.map((step) => step.ordinal);
   if (new Set(ordinals).size !== ordinals.length) {
@@ -672,6 +827,12 @@ export function runStateWithholdingFormula(
       }
       case 'SUBTRACT_ALLOWANCES': {
         const result = subtractAllowances(ruleSet, step.operandRef, value, allowanceCounts);
+        if (!result.ok) return result;
+        value = result.value;
+        break;
+      }
+      case 'ADD_AMOUNT': {
+        const result = addAmount(ruleSet, step.operandRef, value, resolvedElections);
         if (!result.ok) return result;
         value = result.value;
         break;
