@@ -29,15 +29,18 @@ import type { StateFormulaStepsDetail } from '@/lib/tax/state/rules/detailSchema
  * (Task 4O-6R9-6R12) has its own dedicated test file,
  * `state-withholding-formula-apply-flat-rate.test.ts`; `SUBTRACT_ALLOWANCES`
  * (Task 4O-6R14-6R17) has its own dedicated test file,
- * `state-withholding-formula-subtract-allowances.test.ts`; and `ADD_AMOUNT`
+ * `state-withholding-formula-subtract-allowances.test.ts`; `ADD_AMOUNT`
  * (Task 4O-6R20-6R23) has its own dedicated test file,
- * `state-withholding-formula-add-amount.test.ts` — all five are therefore
- * excluded from this file's "unsupported operation" list below. The
- * remaining four operations are asserted to report `METHOD_NOT_IMPLEMENTED`
- * rather than silently executing — their own semantics are NOT locked, and
- * these tests do not attempt to pin down `PER_PERIOD` conversion, state->
- * federal filing-status mapping, `ANNUALIZE`/`DEANNUALIZE` periods-per-year,
- * or `ROUND` scale selection, since Task 4O-2 left all of those unresolved.
+ * `state-withholding-formula-add-amount.test.ts`; and `APPLY_PERCENTAGE_OF`
+ * (Task 4O-6R24-6R26) has its own dedicated test file,
+ * `state-withholding-formula-apply-percentage-of.test.ts` — all six are
+ * therefore excluded from this file's "unsupported operation" list below.
+ * The remaining three operations are asserted to report
+ * `METHOD_NOT_IMPLEMENTED` rather than silently executing — their own
+ * semantics are NOT locked, and these tests do not attempt to pin down
+ * state->federal filing-status mapping, `ANNUALIZE`/`DEANNUALIZE`
+ * periods-per-year, or `ROUND` scale selection, since Task 4O-2 left all of
+ * those unresolved.
  * ===========================================================================
  *
  * Fixtures use RESERVED TEST jurisdiction/source ids and no real tax value.
@@ -521,7 +524,7 @@ describe('multiple formula steps', () => {
 });
 
 describe('unsupported operations do not silently execute', () => {
-  const unsupported = ['APPLY_PERCENTAGE_OF', 'ROUND', 'ANNUALIZE', 'DEANNUALIZE'] as const;
+  const unsupported = ['ROUND', 'ANNUALIZE', 'DEANNUALIZE'] as const;
 
   it.each(unsupported)(
     'reports METHOD_NOT_IMPLEMENTED for %s rather than inventing a result',
@@ -539,7 +542,7 @@ describe('unsupported operations do not silently execute', () => {
 
   it('does not execute a later supported step once an unsupported step is reached', () => {
     const ruleSet = buildRuleSet({});
-    const detail = formulaDetail([step(0, 'APPLY_PERCENTAGE_OF'), step(1, 'FLOOR_AT_ZERO')]);
+    const detail = formulaDetail([step(0, 'ROUND'), step(1, 'FLOOR_AT_ZERO')]);
 
     const result = runStateWithholdingFormula(detail, ruleSet, money('-5'), SINGLE, {}, {});
 

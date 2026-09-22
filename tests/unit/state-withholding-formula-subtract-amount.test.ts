@@ -281,9 +281,9 @@ describe('SUBTRACT_AMOUNT — formula dispatch wiring', () => {
 });
 
 describe('SUBTRACT_AMOUNT — unrelated operations remain unaffected', () => {
-  it('still reports METHOD_NOT_IMPLEMENTED for APPLY_PERCENTAGE_OF, unaffected by SUBTRACT_AMOUNT support', () => {
+  it('still reports METHOD_NOT_IMPLEMENTED for ROUND, unaffected by SUBTRACT_AMOUNT support', () => {
     const ruleSet = buildRuleSet({});
-    const detail = formulaDetail([step(0, 'APPLY_PERCENTAGE_OF')]);
+    const detail = formulaDetail([step(0, 'ROUND')]);
 
     const result = runStateWithholdingFormula(detail, ruleSet, money('100'), SINGLE, {}, {});
 

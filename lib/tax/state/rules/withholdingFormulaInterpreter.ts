@@ -35,10 +35,10 @@ import type { ResolvedStateRuleSet } from './stateRuleSet';
 
 /**
  * State withholding formula interpreter — Task 4O-3A, extended by Tasks
- * 4O-5, 4O-6R6, 4O-6R12, 4O-6R17, and 4O-6R23.
+ * 4O-5, 4O-6R6, 4O-6R12, 4O-6R17, 4O-6R23, and 4O-6R26.
  *
  * ===========================================================================
- * IMPLEMENTS EIGHT OPERATIONS: THE THREE TASK 4O-2 CONTRACT-LOCKED ONES
+ * IMPLEMENTS NINE OPERATIONS: THE THREE TASK 4O-2 CONTRACT-LOCKED ONES
  * (`SUBTRACT_STANDARD_DEDUCTION`, `FLOOR_AT_ZERO`, `APPLY_BRACKETS`), PLUS
  * `SUBTRACT_EXEMPTIONS`'S PERSONAL-EXEMPTION PATH ONLY (Task 4O-4/4O-5),
  * PLUS `SUBTRACT_AMOUNT` (Task 4O-6R3/4O-6R4/4O-6R5/4O-6R6) — a GENERIC
@@ -52,7 +52,12 @@ import type { ResolvedStateRuleSet } from './stateRuleSet';
  * `ADD_AMOUNT` (Task 4O-6R20/4O-6R21/4O-6R22/4O-6R23), generic over any
  * `AMOUNT`-typed field the current WORK jurisdiction's `WITHHOLDING_ELECTION_FORM`
  * declares, consuming an already-resolved, `fieldKey`-keyed employee-election
- * map this function receives as its sixth parameter.
+ * map this function receives as its sixth parameter — PLUS
+ * `APPLY_PERCENTAGE_OF` (Task 4O-6R24/4O-6R25/4O-6R26), also generic over any
+ * `RATE`-shaped `StateRuleKey` like `APPLY_FLAT_RATE`, but computing
+ * `runningValue × (1 + rate)` rather than `runningValue × rate` — an
+ * EXPLICIT OWNER ARITHMETIC DECISION (Task 4O-6R26-OWNER), since no
+ * repository evidence resolved which of the two was intended.
  *
  * `SUBTRACT_EXEMPTIONS` supports ONLY `operandRef ===
  * StateRuleKey.PIT_PERSONAL_EXEMPTION`. The dependent-exemption path
@@ -60,13 +65,13 @@ import type { ResolvedStateRuleSet } from './stateRuleSet';
  * other operandRef, to `SUBTRACT_EXEMPTIONS` fails `RULE_DETAIL_INVALID`
  * rather than being tolerated or treated as merely unsupported.
  *
- * The remaining four operations (`APPLY_PERCENTAGE_OF`, `ANNUALIZE`,
- * `DEANNUALIZE`, `ROUND`) remain contractually unresolved (Task 4O-2 §3/§8)
- * and are never silently executed — encountering one reports
- * `METHOD_NOT_IMPLEMENTED`, mirroring the exact, already-established
- * meaning of that reason elsewhere in the project
- * (`lib/calculator/pipeline/tax-stages.ts`'s `evaluateComponent()`: "the
- * calculation methodology for this category is delivered in a later phase").
+ * The remaining three operations (`ANNUALIZE`, `DEANNUALIZE`, `ROUND`)
+ * remain contractually unresolved (Task 4O-2 §3/§8) and are never silently
+ * executed — encountering one reports `METHOD_NOT_IMPLEMENTED`, mirroring
+ * the exact, already-established meaning of that reason elsewhere in the
+ * project (`lib/calculator/pipeline/tax-stages.ts`'s `evaluateComponent()`:
+ * "the calculation methodology for this category is delivered in a later
+ * phase").
  *
  * Execution model (Task 4O-2 §1, locked): steps run in strict `ordinal`
  * order over a single running `Money` accumulator. There is no named
@@ -505,6 +510,102 @@ function applyFlatRate(
 }
 
 /**
+ * `APPLY_PERCENTAGE_OF` — Task 4O-6R24/4O-6R25/4O-6R26 contract-locked,
+ * GENERIC OVER `RATE`-SHAPED `StateRuleKey`s.
+ *
+ * ARITHMETIC IS AN EXPLICIT OWNER DECISION (Task 4O-6R26-OWNER), NOT A
+ * REPOSITORY-EVIDENCED FACT: `runningValue = runningValue × (1 +
+ * normalizedRate)`. Tasks 4O-6R24/4O-6R25 found no fixture, comment, or
+ * production data anywhere resolving whether this operation meant plain
+ * multiplication (which would make it a byte-for-byte duplicate of
+ * `applyFlatRate()`) or this gross-up form — the owner explicitly selected
+ * the gross-up form, and this is the one and only respect in which this
+ * function differs from `applyFlatRate()`.
+ *
+ * Every other mechanic is TRANSFERRED, DISCLOSED AS SUCH, from
+ * `applyFlatRate()` — not independently re-derived — because it attaches to
+ * the shared `RATE` shape itself, not to either operation's arithmetic:
+ * `operandRef` validation against `VALID_RULE_KEYS` (never hard-coded to a
+ * specific key), the `RATE` shape check, `applicability === 'NOT_APPLICABLE'`
+ * → `SCENARIO_UNSUPPORTED`, `appliesTo === 'EMPLOYER'` →
+ * `SCENARIO_UNSUPPORTED`, and rate normalization via the existing,
+ * unmodified `readRate()`. Task 4O-6R24 §7 explicitly noted this transfer is
+ * analogous, not itself repository-evidenced for this specific operation —
+ * recorded here for the same reason it was recorded on `applyFlatRate()`'s
+ * own `applicability`/`appliesTo` handling (Task 4O-6R11): so a future
+ * reader does not mistake an analogy for a rediscovered fact.
+ *
+ * The base quantity is the current running accumulator — the only
+ * quantity `runStateWithholdingFormula()`'s single-accumulator architecture
+ * exposes to any step (Task 4O-6R25 §2, re-confirmed Task 4O-6R26 Step 1.D)
+ * — never a second, separately-named base.
+ */
+function applyPercentageOf(
+  ruleSet: ResolvedStateRuleSet,
+  operandRef: string | null,
+  runningValue: Money,
+): Read<Money> {
+  if (operandRef === null) {
+    return readFail(
+      invalidDetail('APPLY_PERCENTAGE_OF requires a non-null operandRef naming a StateRuleKey'),
+    );
+  }
+  if (!VALID_RULE_KEYS.has(operandRef)) {
+    return readFail(
+      invalidDetail(
+        `APPLY_PERCENTAGE_OF operandRef "${operandRef}" does not name a known StateRuleKey`,
+      ),
+    );
+  }
+  const rateRuleKey = operandRef as StateRuleKey;
+
+  const found = readDetail(ruleSet, rateRuleKey);
+  if (!found.ok) {
+    return readFail(found.problem);
+  }
+
+  const detail = found.value.detail as { shape: string };
+  if (detail.shape !== 'RATE') {
+    return readFail(
+      invalidDetail(
+        `APPLY_PERCENTAGE_OF operandRef "${operandRef}" resolved a "${detail.shape}" rule, not a ` +
+          'RATE',
+      ),
+    );
+  }
+  const rateDetail = found.value.detail as StateRateDetail;
+
+  if (rateDetail.applicability === 'NOT_APPLICABLE') {
+    return readFail(
+      stateUnavailable(
+        StateReason.SCENARIO_UNSUPPORTED,
+        `APPLY_PERCENTAGE_OF operandRef "${operandRef}" is NOT_APPLICABLE in this jurisdiction; ` +
+          'no rate is assumed',
+        rateRuleKey,
+      ),
+    );
+  }
+
+  if (rateDetail.appliesTo === 'EMPLOYER') {
+    return readFail(
+      stateUnavailable(
+        StateReason.SCENARIO_UNSUPPORTED,
+        `APPLY_PERCENTAGE_OF operandRef "${operandRef}" applies to EMPLOYER, not EMPLOYEE; this ` +
+          'withholding formula does not calculate employer income tax',
+        rateRuleKey,
+      ),
+    );
+  }
+
+  const rate = readRate(rateDetail.rate, rateDetail.unit, rateRuleKey, 'rate');
+  if (!rate.ok) {
+    return readFail(rate.problem);
+  }
+
+  return readOk(multiply(runningValue, add(money('1'), rate.value)));
+}
+
+/**
  * `SUBTRACT_ALLOWANCES` — Task 4O-6R14/4O-6R15/4O-6R16/4O-6R17 contract-locked,
  * GENERIC OVER `AMOUNT_PER_ALLOWANCE`-SHAPED `StateRuleKey`s.
  *
@@ -747,15 +848,16 @@ function addAmount(
  *
  * `SUBTRACT_STANDARD_DEDUCTION`, `FLOOR_AT_ZERO`, `APPLY_BRACKETS`,
  * `SUBTRACT_EXEMPTIONS` (personal-exemption path only), `SUBTRACT_AMOUNT`,
- * `APPLY_FLAT_RATE`, `SUBTRACT_ALLOWANCES`, and `ADD_AMOUNT` are
- * implemented. Any other operation — including `SUBTRACT_EXEMPTIONS` with an
- * operandRef other than `PIT_PERSONAL_EXEMPTION`, or
- * `SUBTRACT_AMOUNT`/`APPLY_FLAT_RATE`/`SUBTRACT_ALLOWANCES`/`ADD_AMOUNT`
- * with an invalid operandRef — reports `METHOD_NOT_IMPLEMENTED` or
- * `RULE_DETAIL_INVALID` respectively, rather than being silently skipped or
- * executed. Duplicate ordinals are never silently ordered — they report
- * `RULE_CONFLICT`, mirroring `selectStateWithholdingTableRow()`'s identical
- * treatment of ambiguous, contradictory rule data (Task 4N-R).
+ * `APPLY_FLAT_RATE`, `SUBTRACT_ALLOWANCES`, `ADD_AMOUNT`, and
+ * `APPLY_PERCENTAGE_OF` are implemented. Any other operation — including
+ * `SUBTRACT_EXEMPTIONS` with an operandRef other than `PIT_PERSONAL_EXEMPTION`,
+ * or `SUBTRACT_AMOUNT`/`APPLY_FLAT_RATE`/`SUBTRACT_ALLOWANCES`/`ADD_AMOUNT`/
+ * `APPLY_PERCENTAGE_OF` with an invalid operandRef — reports
+ * `METHOD_NOT_IMPLEMENTED` or `RULE_DETAIL_INVALID` respectively, rather
+ * than being silently skipped or executed. Duplicate ordinals are never
+ * silently ordered — they report `RULE_CONFLICT`, mirroring
+ * `selectStateWithholdingTableRow()`'s identical treatment of ambiguous,
+ * contradictory rule data (Task 4N-R).
  *
  * Pure, synchronous, DB-free: `ruleSet` is only read via `readDetail()`,
  * never mutated; `filingStatus` is read, never mutated or mapped;
@@ -833,6 +935,12 @@ export function runStateWithholdingFormula(
       }
       case 'ADD_AMOUNT': {
         const result = addAmount(ruleSet, step.operandRef, value, resolvedElections);
+        if (!result.ok) return result;
+        value = result.value;
+        break;
+      }
+      case 'APPLY_PERCENTAGE_OF': {
+        const result = applyPercentageOf(ruleSet, step.operandRef, value);
         if (!result.ok) return result;
         value = result.value;
         break;
