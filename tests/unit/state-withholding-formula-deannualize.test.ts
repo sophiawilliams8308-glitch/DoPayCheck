@@ -14,42 +14,37 @@ import { StateRuleKey } from '@/lib/tax/state/ruleKeys';
 import type { StateFormulaStepsDetail } from '@/lib/tax/state/rules/detailSchemas';
 
 /**
- * `ANNUALIZE` — contract-locked by Task 4O-6R33 following the Task 4O-6R32
- * audit.
+ * `DEANNUALIZE` — contract-locked by Tasks 4O-6R38 through 4O-6R45.
  *
  * ===========================================================================
  * SCOPE NOTE.
  *
- * `runningValue = runningValue × periodsPerYear`, where the factor comes
- * EXCLUSIVELY from the pre-existing, unmodified
- * `resolveStatePayPeriodsPerYear(ruleSet, payFrequency)` reader (Task 4K) —
- * never the generic calculator `periodsPerYear()`, never a hardcoded
- * frequency table, never a federal rule key. `operandRef` MUST be `null`
- * (single implicit target, mirroring `SUBTRACT_STANDARD_DEDUCTION`), since
- * `WITHHOLDING_PAY_PERIODS_PER_YEAR` is the sole `StateRuleKey` ever
- * registered against the `COUNT_BY_PAY_PERIOD` shape. `payFrequency` is a
- * new, explicit, narrow interpreter parameter (Task 4O-6R33 Decision 3) —
- * structurally identical in role to the existing `filingStatus` parameter: a
- * per-calculation runtime fact, never rule data.
+ * `runningValue = runningValue ÷ periodsPerYear`, the inverse of `ANNUALIZE`
+ * (`state-withholding-formula-annualize.test.ts`), using an IDENTICAL
+ * contract shape: `operandRef` must be `null`, the factor comes exclusively
+ * from `resolveStatePayPeriodsPerYear(ruleSet, payFrequency)`, and
+ * `payFrequency` is the same, already-existing interpreter parameter
+ * `ANNUALIZE` already consumes — never a new one.
  *
- * This operation performs NO ROUNDING and never consumes
- * `WITHHOLDING_ROUNDING_POLICY` (locked outside the formula interpreter
- * entirely by Task 4O-6R31). `DEANNUALIZE` — the inverse operation (Task
- * 4O-6R38 through 4O-6R45) — is implemented and tested separately, in its
- * own dedicated file `state-withholding-formula-deannualize.test.ts`, not
- * here.
+ * The one respect in which this operation differs from `ANNUALIZE`:
+ * division, performed via `divideHighPrecision()` (`lib/core/money.ts`,
+ * Task 4O-6R41/4O-6R44) rather than `multiply()` — high-precision Decimal
+ * arithmetic at this module's configured working precision, explicitly NOT
+ * mathematically exact, and never consuming `WITHHOLDING_ROUNDING_POLICY`
+ * or any scale/`RoundingMode` of any kind (Task 4O-6R38/4O-6R43 locks).
  * ===========================================================================
  *
  * Fixtures use RESERVED TEST jurisdiction/source ids and no real tax value.
  */
 
-const JURISDICTION_CODE = 'TEST-ANNUALIZE';
-const JURISDICTION_ID = 'test-annualize-jurisdiction-id';
+const JURISDICTION_CODE = 'TEST-DEANNUALIZE';
+const JURISDICTION_ID = 'test-deannualize-jurisdiction-id';
 const TAX_YEAR = 2099;
 const EFFECTIVE = '2099-06-15T00:00:00.000Z';
 const PERIODS_KEY = StateRuleKey.WITHHOLDING_PAY_PERIODS_PER_YEAR;
 const SINGLE = 'SINGLE';
 const WEEKLY = 'WEEKLY';
+const MONTHLY = 'MONTHLY';
 
 function reference(ruleKey: string): RuleReference {
   return {
@@ -119,45 +114,45 @@ const COUNTS_DETAIL = {
   ],
 };
 
-describe('ANNUALIZE — arithmetic (Task 4O-6R33-locked)', () => {
-  it('multiplies the running value by the state-native periods-per-year count (happy path)', () => {
+describe('DEANNUALIZE — arithmetic (Tasks 4O-6R38-6R45-locked)', () => {
+  it('divides the running value by the state-native periods-per-year count (happy path)', () => {
     const ruleSet = buildRuleSet({
       [PERIODS_KEY]: availableEntry(PERIODS_KEY, COUNTS_DETAIL),
     });
-    const detail = formulaDetail([step(0, 'ANNUALIZE')]);
+    const detail = formulaDetail([step(0, 'DEANNUALIZE')]);
 
     const result = runStateWithholdingFormula(
       detail,
       ruleSet,
-      money('1000'),
+      money('120000'),
       SINGLE,
       {},
       {},
-      WEEKLY,
+      MONTHLY,
     );
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    // 1000 * 52 = 52000.
-    expect(toStorageString(result.value)).toBe('52000');
+    // 120000 / 12 = 10000.
+    expect(toStorageString(result.value)).toBe('10000');
   });
 
   it.each([
-    ['WEEKLY', 52, '52000'],
-    ['BIWEEKLY', 26, '26000'],
-    ['MONTHLY', 12, '12000'],
+    ['WEEKLY', 52, '10'],
+    ['BIWEEKLY', 26, '10'],
+    ['MONTHLY', 12, '10'],
   ])(
-    "uses the requested frequency %s (count %i), not a different frequency's count",
-    (frequency, _count, expected) => {
+    "uses the requested frequency %s's own count, not a different frequency's",
+    (frequency, count, expected) => {
       const ruleSet = buildRuleSet({
         [PERIODS_KEY]: availableEntry(PERIODS_KEY, COUNTS_DETAIL),
       });
-      const detail = formulaDetail([step(0, 'ANNUALIZE')]);
+      const detail = formulaDetail([step(0, 'DEANNUALIZE')]);
 
       const result = runStateWithholdingFormula(
         detail,
         ruleSet,
-        money('1000'),
+        money(String(10 * count)),
         SINGLE,
         {},
         {},
@@ -174,7 +169,7 @@ describe('ANNUALIZE — arithmetic (Task 4O-6R33-locked)', () => {
     const ruleSet = buildRuleSet({
       [PERIODS_KEY]: availableEntry(PERIODS_KEY, COUNTS_DETAIL),
     });
-    const detail = formulaDetail([step(0, 'ANNUALIZE')]);
+    const detail = formulaDetail([step(0, 'DEANNUALIZE')]);
 
     const result = runStateWithholdingFormula(detail, ruleSet, money('0'), SINGLE, {}, {}, WEEKLY);
 
@@ -182,19 +177,45 @@ describe('ANNUALIZE — arithmetic (Task 4O-6R33-locked)', () => {
     if (!result.ok) throw new Error('expected ok');
     expect(toStorageString(result.value)).toBe('0');
   });
+});
 
-  it('performs no rounding, preserving exact Decimal precision', () => {
+describe('DEANNUALIZE — high-precision division, no rounding', () => {
+  it('preserves the configured Decimal.js working precision for a non-terminating quotient, without currency rounding', () => {
     const ruleSet = buildRuleSet({
       [PERIODS_KEY]: availableEntry(PERIODS_KEY, COUNTS_DETAIL),
     });
-    const detail = formulaDetail([step(0, 'ANNUALIZE')]);
+    const detail = formulaDetail([step(0, 'DEANNUALIZE')]);
 
-    // 10.005 * 52 = 520.26 exactly; naive IEEE-754 float arithmetic would not
-    // reproduce this exactly.
+    // 100 / 12 has no terminating decimal expansion. The result is this
+    // module's configured 34-significant-digit high-precision Decimal
+    // approximation — NOT a mathematically exact rational value, and never
+    // rounded to a currency or intermediate scale.
     const result = runStateWithholdingFormula(
       detail,
       ruleSet,
-      money('10.005'),
+      money('100'),
+      SINGLE,
+      {},
+      {},
+      MONTHLY,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    expect(toStorageString(result.value)).toBe('8.333333333333333333333333333333333');
+  });
+
+  it('does not consume WITHHOLDING_ROUNDING_POLICY — succeeds with no such rule resolved', () => {
+    const ruleSet = buildRuleSet({
+      [PERIODS_KEY]: availableEntry(PERIODS_KEY, COUNTS_DETAIL),
+      // Deliberately no WITHHOLDING_ROUNDING_POLICY entry at all.
+    });
+    const detail = formulaDetail([step(0, 'DEANNUALIZE')]);
+
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('1000'),
       SINGLE,
       {},
       {},
@@ -202,17 +223,30 @@ describe('ANNUALIZE — arithmetic (Task 4O-6R33-locked)', () => {
     );
 
     expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('520.26');
+  });
+
+  it('imports no WITHHOLDING_ROUNDING_POLICY, currencyScale, currencyMode, intermediateScale, or RoundingMode reference from the deannualize() handler', async () => {
+    const fs = await import('node:fs');
+    const source = fs.readFileSync(
+      new URL('../../lib/tax/state/rules/withholdingFormulaInterpreter.ts', import.meta.url),
+      'utf8',
+    );
+    const match = /function deannualize\([\s\S]*?\n}\n/.exec(source);
+    if (!match) throw new Error('deannualize() not found in source');
+    const functionSource = match[0];
+    expect(functionSource).not.toMatch(
+      /WITHHOLDING_ROUNDING_POLICY|currencyScale|currencyMode|intermediateScale|RoundingMode/,
+    );
+    expect(functionSource).not.toMatch(/\bdivide\(|\bround\(|toDecimalPlaces/);
   });
 });
 
-describe('ANNUALIZE — operandRef validation', () => {
+describe('DEANNUALIZE — operandRef validation', () => {
   it('succeeds with a null operandRef (single implicit target)', () => {
     const ruleSet = buildRuleSet({
       [PERIODS_KEY]: availableEntry(PERIODS_KEY, COUNTS_DETAIL),
     });
-    const detail = formulaDetail([step(0, 'ANNUALIZE', null)]);
+    const detail = formulaDetail([step(0, 'DEANNUALIZE', null)]);
 
     const result = runStateWithholdingFormula(
       detail,
@@ -231,7 +265,7 @@ describe('ANNUALIZE — operandRef validation', () => {
     const ruleSet = buildRuleSet({
       [PERIODS_KEY]: availableEntry(PERIODS_KEY, COUNTS_DETAIL),
     });
-    const detail = formulaDetail([step(0, 'ANNUALIZE', PERIODS_KEY)]);
+    const detail = formulaDetail([step(0, 'DEANNUALIZE', PERIODS_KEY)]);
 
     const result = runStateWithholdingFormula(
       detail,
@@ -249,12 +283,12 @@ describe('ANNUALIZE — operandRef validation', () => {
   });
 });
 
-describe('ANNUALIZE — pay frequency availability', () => {
+describe('DEANNUALIZE — pay frequency availability', () => {
   it('reports SCENARIO_UNSUPPORTED when payFrequency is null', () => {
     const ruleSet = buildRuleSet({
       [PERIODS_KEY]: availableEntry(PERIODS_KEY, COUNTS_DETAIL),
     });
-    const detail = formulaDetail([step(0, 'ANNUALIZE')]);
+    const detail = formulaDetail([step(0, 'DEANNUALIZE')]);
 
     const result = runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, null);
 
@@ -264,10 +298,10 @@ describe('ANNUALIZE — pay frequency availability', () => {
   });
 });
 
-describe('ANNUALIZE — referenced rule missing/unverified/malformed', () => {
+describe('DEANNUALIZE — referenced rule missing/unverified/malformed', () => {
   it('reports RULE_MISSING when WITHHOLDING_PAY_PERIODS_PER_YEAR was never resolved', () => {
     const ruleSet = buildRuleSet({});
-    const detail = formulaDetail([step(0, 'ANNUALIZE')]);
+    const detail = formulaDetail([step(0, 'DEANNUALIZE')]);
 
     const result = runStateWithholdingFormula(
       detail,
@@ -291,7 +325,7 @@ describe('ANNUALIZE — referenced rule missing/unverified/malformed', () => {
         verificationStatus: 'PENDING',
       }),
     });
-    const detail = formulaDetail([step(0, 'ANNUALIZE')]);
+    const detail = formulaDetail([step(0, 'DEANNUALIZE')]);
 
     const result = runStateWithholdingFormula(
       detail,
@@ -309,7 +343,7 @@ describe('ANNUALIZE — referenced rule missing/unverified/malformed', () => {
   });
 
   it('reports RULE_DETAIL_INVALID for a detail shape mismatched to this rule key', () => {
-    const detail = formulaDetail([step(0, 'ANNUALIZE')]);
+    const detail = formulaDetail([step(0, 'DEANNUALIZE')]);
     const ruleSet = buildRuleSet({
       [PERIODS_KEY]: availableEntry(PERIODS_KEY, {
         shape: 'WAGE_BASE',
@@ -335,12 +369,12 @@ describe('ANNUALIZE — referenced rule missing/unverified/malformed', () => {
   });
 });
 
-describe('ANNUALIZE — frequency absent from counts[] or stated as null', () => {
+describe('DEANNUALIZE — frequency absent from counts[] or stated as null', () => {
   it('reports SCENARIO_UNSUPPORTED for a frequency the rule never lists', () => {
     const ruleSet = buildRuleSet({
       [PERIODS_KEY]: availableEntry(PERIODS_KEY, COUNTS_DETAIL),
     });
-    const detail = formulaDetail([step(0, 'ANNUALIZE')]);
+    const detail = formulaDetail([step(0, 'DEANNUALIZE')]);
 
     const result = runStateWithholdingFormula(
       detail,
@@ -361,7 +395,7 @@ describe('ANNUALIZE — frequency absent from counts[] or stated as null', () =>
     const ruleSet = buildRuleSet({
       [PERIODS_KEY]: availableEntry(PERIODS_KEY, COUNTS_DETAIL),
     });
-    const detail = formulaDetail([step(0, 'ANNUALIZE')]);
+    const detail = formulaDetail([step(0, 'DEANNUALIZE')]);
 
     const result = runStateWithholdingFormula(
       detail,
@@ -379,10 +413,10 @@ describe('ANNUALIZE — frequency absent from counts[] or stated as null', () =>
   });
 });
 
-describe('ANNUALIZE — no generic fallback', () => {
+describe('DEANNUALIZE — no generic fallback', () => {
   it('does not substitute the generic calculator periodsPerYear() when the state rule is missing', () => {
     const ruleSet = buildRuleSet({});
-    const detail = formulaDetail([step(0, 'ANNUALIZE')]);
+    const detail = formulaDetail([step(0, 'DEANNUALIZE')]);
 
     // If a generic fallback existed, WEEKLY would silently resolve to 52 via
     // the calendar table and this would succeed. It must not.
@@ -403,7 +437,7 @@ describe('ANNUALIZE — no generic fallback', () => {
     const ruleSet = buildRuleSet({
       [PERIODS_KEY]: availableEntry(PERIODS_KEY, COUNTS_DETAIL),
     });
-    const detail = formulaDetail([step(0, 'ANNUALIZE')]);
+    const detail = formulaDetail([step(0, 'DEANNUALIZE')]);
 
     const result = runStateWithholdingFormula(
       detail,
@@ -417,46 +451,12 @@ describe('ANNUALIZE — no generic fallback', () => {
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
-    // Never 4000 (1000 * 4, the generic quarterly calendar count).
-    expect(result).not.toEqual({ ok: true, value: money('4000') });
+    // Never 250 (1000 / 4, the generic quarterly calendar count).
+    expect(result).not.toEqual({ ok: true, value: money('250') });
   });
 });
 
-describe('ANNUALIZE — no rounding policy consumed', () => {
-  it('does not require a WITHHOLDING_ROUNDING_POLICY rule to be resolved', () => {
-    const ruleSet = buildRuleSet({
-      [PERIODS_KEY]: availableEntry(PERIODS_KEY, COUNTS_DETAIL),
-      // Deliberately no WITHHOLDING_ROUNDING_POLICY entry at all.
-    });
-    const detail = formulaDetail([step(0, 'ANNUALIZE')]);
-
-    const result = runStateWithholdingFormula(
-      detail,
-      ruleSet,
-      money('1000'),
-      SINGLE,
-      {},
-      {},
-      WEEKLY,
-    );
-
-    expect(result.ok).toBe(true);
-  });
-
-  it('does not reference WITHHOLDING_ROUNDING_POLICY outside of doc comments', async () => {
-    const fs = await import('node:fs');
-    const source = fs
-      .readFileSync(
-        new URL('../../lib/tax/state/rules/withholdingFormulaInterpreter.ts', import.meta.url),
-        'utf8',
-      )
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/^\s*\/\/.*$/gm, '');
-    expect(source).not.toMatch(/WITHHOLDING_ROUNDING_POLICY/);
-  });
-});
-
-describe('ANNUALIZE — ROUND remains unsupported', () => {
+describe('DEANNUALIZE — ROUND remains unsupported', () => {
   it('reports METHOD_NOT_IMPLEMENTED for ROUND', () => {
     const ruleSet = buildRuleSet({
       [PERIODS_KEY]: availableEntry(PERIODS_KEY, COUNTS_DETAIL),
@@ -479,9 +479,66 @@ describe('ANNUALIZE — ROUND remains unsupported', () => {
   });
 });
 
-describe('ANNUALIZE — sequential accumulator behavior', () => {
-  it('operates on the running value left by a preceding formula step', () => {
+describe('DEANNUALIZE — ordinal placement', () => {
+  it('works as the first (and only) step in a formula', () => {
     const ruleSet = buildRuleSet({
+      [PERIODS_KEY]: availableEntry(PERIODS_KEY, COUNTS_DETAIL),
+    });
+    const detail = formulaDetail([step(0, 'DEANNUALIZE')]);
+
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('1200'),
+      SINGLE,
+      {},
+      {},
+      MONTHLY,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    expect(toStorageString(result.value)).toBe('100');
+  });
+
+  it('works as a middle step, sandwiched between ANNUALIZE and an already-supported operation', () => {
+    const ruleSet = buildRuleSet({
+      [PERIODS_KEY]: availableEntry(PERIODS_KEY, COUNTS_DETAIL),
+      [StateRuleKey.WITHHOLDING_STANDARD_DEDUCTION]: availableEntry(
+        StateRuleKey.WITHHOLDING_STANDARD_DEDUCTION,
+        {
+          shape: 'AMOUNT_BY_FILING_STATUS',
+          unit: 'ANNUAL',
+          amounts: [{ filingStatus: SINGLE, amount: '20' }],
+        },
+      ),
+    });
+    const detail = formulaDetail([
+      step(10, 'ANNUALIZE'),
+      step(20, 'DEANNUALIZE'),
+      step(30, 'SUBTRACT_STANDARD_DEDUCTION'),
+    ]);
+
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('100'),
+      SINGLE,
+      {},
+      {},
+      MONTHLY,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    // 100 * 12 = 1200 (ANNUALIZE); 1200 / 12 = 100 (DEANNUALIZE);
+    // 100 - 20 = 80 (SUBTRACT_STANDARD_DEDUCTION).
+    expect(toStorageString(result.value)).toBe('80');
+  });
+
+  it('works as the final step in a multi-step formula', () => {
+    const ruleSet = buildRuleSet({
+      [PERIODS_KEY]: availableEntry(PERIODS_KEY, COUNTS_DETAIL),
       [StateRuleKey.WITHHOLDING_STANDARD_DEDUCTION]: availableEntry(
         StateRuleKey.WITHHOLDING_STANDARD_DEDUCTION,
         {
@@ -490,46 +547,45 @@ describe('ANNUALIZE — sequential accumulator behavior', () => {
           amounts: [{ filingStatus: SINGLE, amount: '200' }],
         },
       ),
-      [PERIODS_KEY]: availableEntry(PERIODS_KEY, COUNTS_DETAIL),
     });
-    const detail = formulaDetail([step(0, 'SUBTRACT_STANDARD_DEDUCTION'), step(1, 'ANNUALIZE')]);
+    const detail = formulaDetail([step(0, 'SUBTRACT_STANDARD_DEDUCTION'), step(1, 'DEANNUALIZE')]);
 
     const result = runStateWithholdingFormula(
       detail,
       ruleSet,
-      money('1000'),
+      money('1200'),
       SINGLE,
       {},
       {},
-      WEEKLY,
+      MONTHLY,
     );
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    // 1000 - 200 = 800; 800 * 52 = 41600.
-    expect(toStorageString(result.value)).toBe('41600');
+    // 1200 - 200 = 1000; 1000 / 12 (high precision).
+    expect(toStorageString(result.value)).toBe('83.33333333333333333333333333333333');
   });
 
-  it('does not read wages or StateCalculationContext directly — only the running value passed in', () => {
+  it('executes two DEANNUALIZE steps in the same formula, each exactly once, in ordinal order', () => {
     const ruleSet = buildRuleSet({
       [PERIODS_KEY]: availableEntry(PERIODS_KEY, COUNTS_DETAIL),
     });
-    const detail = formulaDetail([step(0, 'ANNUALIZE')]);
+    const detail = formulaDetail([step(0, 'DEANNUALIZE'), step(1, 'DEANNUALIZE')]);
 
     const result = runStateWithholdingFormula(
       detail,
       ruleSet,
-      money('123.45'),
+      money('1440'),
       SINGLE,
       {},
       {},
-      WEEKLY,
+      MONTHLY,
     );
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    // 123.45 * 52 = 6419.4 — computed purely from the supplied running value.
-    expect(toStorageString(result.value)).toBe('6419.4');
+    // 1440 / 12 = 120; 120 / 12 = 10.
+    expect(toStorageString(result.value)).toBe('10');
   });
 });
 
@@ -537,7 +593,7 @@ describe('purity', () => {
   it('does not mutate the supplied ResolvedStateRuleSet', () => {
     const entry = availableEntry(PERIODS_KEY, COUNTS_DETAIL);
     const ruleSet = buildRuleSet({ [PERIODS_KEY]: entry });
-    const detail = formulaDetail([step(0, 'ANNUALIZE')]);
+    const detail = formulaDetail([step(0, 'DEANNUALIZE')]);
 
     const before = stateRule(ruleSet, PERIODS_KEY);
     runStateWithholdingFormula(detail, ruleSet, money('1000'), SINGLE, {}, {}, WEEKLY);
@@ -553,7 +609,7 @@ describe('purity', () => {
     const ruleSet = buildRuleSet({
       [PERIODS_KEY]: availableEntry(PERIODS_KEY, COUNTS_DETAIL),
     });
-    const detail = formulaDetail([step(0, 'ANNUALIZE')]);
+    const detail = formulaDetail([step(0, 'DEANNUALIZE')]);
 
     const result = runStateWithholdingFormula(
       detail,

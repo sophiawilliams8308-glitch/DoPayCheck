@@ -130,6 +130,30 @@ export function divide(a: Money, b: Money, scale: number, mode: RoundingMode): M
   return a.dividedBy(b).toDecimalPlaces(scale, mode);
 }
 
+/**
+ * Divides `a` by `b` at the module's configured Decimal.js working
+ * precision, without applying any currency or intermediate rounding.
+ *
+ * This is NOT mathematically exact. For a quotient with a non-terminating
+ * decimal expansion (e.g. dividing by 3), the result is a finite
+ * approximation bounded by this module's working precision — never an
+ * infinitely precise rational value, which no Decimal-based representation
+ * can produce.
+ *
+ * Intended for intermediate arithmetic where a final, policy-driven
+ * rounding decision (currency scale, intermediate scale, rounding mode)
+ * belongs to a later, separate step — never to this function. Callers
+ * needing a rounded result should use `divide()` instead.
+ *
+ * @throws {MoneyError} on division by zero.
+ */
+export function divideHighPrecision(a: Money, b: Money): Money {
+  if (b.isZero()) {
+    throw new MoneyError('Division by zero');
+  }
+  return a.dividedBy(b);
+}
+
 /** Sums a list exactly. An empty list sums to zero. */
 export function sum(values: readonly Money[]): Money {
   return values.reduce<Money>((total, value) => total.plus(value), zero());

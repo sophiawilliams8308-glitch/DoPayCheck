@@ -1,6 +1,7 @@
 import {
   add,
   compare,
+  divideHighPrecision,
   max,
   money,
   multiply,
@@ -36,10 +37,10 @@ import { resolveStatePayPeriodsPerYear } from './withholdingPayPeriods';
 
 /**
  * State withholding formula interpreter — Task 4O-3A, extended by Tasks
- * 4O-5, 4O-6R6, 4O-6R12, 4O-6R17, 4O-6R23, 4O-6R26, and 4O-6R33.
+ * 4O-5, 4O-6R6, 4O-6R12, 4O-6R17, 4O-6R23, 4O-6R26, 4O-6R33, and 4O-6R45.
  *
  * ===========================================================================
- * IMPLEMENTS TEN OPERATIONS: THE THREE TASK 4O-2 CONTRACT-LOCKED ONES
+ * IMPLEMENTS ELEVEN OPERATIONS: THE THREE TASK 4O-2 CONTRACT-LOCKED ONES
  * (`SUBTRACT_STANDARD_DEDUCTION`, `FLOOR_AT_ZERO`, `APPLY_BRACKETS`), PLUS
  * `SUBTRACT_EXEMPTIONS`'S PERSONAL-EXEMPTION PATH ONLY (Task 4O-4/4O-5),
  * PLUS `SUBTRACT_AMOUNT` (Task 4O-6R3/4O-6R4/4O-6R5/4O-6R6) — a GENERIC
@@ -64,7 +65,15 @@ import { resolveStatePayPeriodsPerYear } from './withholdingPayPeriods';
  * `resolveStatePayPeriodsPerYear()`, consuming a new, narrow `payFrequency`
  * parameter this function receives as its seventh parameter — structurally
  * identical in role to `filingStatus`, never the whole
- * `StateCalculationContext`.
+ * `StateCalculationContext` — PLUS `DEANNUALIZE` (Task 4O-6R38/4O-6R40
+ * through 4O-6R45), the inverse of `ANNUALIZE`: contract-locked null
+ * `operandRef`, computing `runningValue ÷ periodsPerYear` via the same
+ * `resolveStatePayPeriodsPerYear()` and the same `payFrequency` parameter,
+ * but dividing via `divideHighPrecision()` (`lib/core/money.ts`) rather than
+ * `divide()` — high-precision, explicitly NOT mathematically exact Decimal
+ * arithmetic, never `WITHHOLDING_ROUNDING_POLICY` or any scale/`RoundingMode`
+ * of any kind, resolving the rounding-policy precision conflict Task
+ * 4O-6R33 §5 originally left unresolved.
  *
  * `SUBTRACT_EXEMPTIONS` supports ONLY `operandRef ===
  * StateRuleKey.PIT_PERSONAL_EXEMPTION`. The dependent-exemption path
@@ -72,16 +81,16 @@ import { resolveStatePayPeriodsPerYear } from './withholdingPayPeriods';
  * other operandRef, to `SUBTRACT_EXEMPTIONS` fails `RULE_DETAIL_INVALID`
  * rather than being tolerated or treated as merely unsupported.
  *
- * The remaining two operations (`DEANNUALIZE`, `ROUND`) remain
- * contractually unresolved (Task 4O-2 §3/§8) and are never silently
- * executed — encountering one reports `METHOD_NOT_IMPLEMENTED`, mirroring
- * the exact, already-established meaning of that reason elsewhere in the
- * project (`lib/calculator/pipeline/tax-stages.ts`'s `evaluateComponent()`:
- * "the calculation methodology for this category is delivered in a later
- * phase"). `DEANNUALIZE` specifically was left unresolved by Task 4O-6R33
- * §5 because its real arithmetic precedent needs a rounding-policy
- * precision decision that Task 4O-6R31 locked outside this interpreter's
- * scope — never assume it shares `ANNUALIZE`'s contract.
+ * The one remaining operation (`ROUND`) remains contractually unresolved
+ * (Task 4O-2 §3/§8, Task 4O-6R31) and is never silently executed —
+ * encountering it reports `METHOD_NOT_IMPLEMENTED`, mirroring the exact,
+ * already-established meaning of that reason elsewhere in the project
+ * (`lib/calculator/pipeline/tax-stages.ts`'s `evaluateComponent()`: "the
+ * calculation methodology for this category is delivered in a later
+ * phase"). `ROUND` was explicitly locked OUTSIDE this interpreter's scope
+ * entirely (Task 4O-6R31) — it is not merely unimplemented, but architecturally
+ * excluded: rounding belongs to a future, separate state rounding stage,
+ * never to a formula-step operation.
  *
  * Execution model (Task 4O-2 §1, locked): steps run in strict `ordinal`
  * order over a single running `Money` accumulator. There is no named
@@ -887,9 +896,10 @@ function addAmount(
  *
  * NO ROUNDING, NO `WITHHOLDING_ROUNDING_POLICY`: Task 4O-6R31 locked
  * rounding entirely outside the formula interpreter, and this operation's
- * pure multiplication needs no precision decision to begin with (unlike
- * `DEANNUALIZE`'s division, which is NOT implemented here — Task 4O-6R33 §5
- * explicitly leaves it separately unresolved).
+ * pure multiplication needs no precision decision to begin with — unlike
+ * `DEANNUALIZE`'s division, which uses `divideHighPrecision()` (see
+ * `deannualize()` below) rather than any scale/`RoundingMode`-bearing
+ * `divide()` call, for the identical reason.
  *
  * The integer count is converted to `Money` via `money(String(count))` —
  * the same established pattern `subtractAllowances()` already uses for its
@@ -928,20 +938,89 @@ function annualize(
 }
 
 /**
+ * `DEANNUALIZE` — Task 4O-6R38/4O-6R43 contract-locked, null `operandRef`.
+ *
+ * `runningValue = runningValue ÷ periodsPerYear`, the inverse of
+ * `annualize()`'s multiplication, using an IDENTICAL contract shape:
+ * `operandRef` must be `null` (the same single-implicit-target reasoning —
+ * `WITHHOLDING_PAY_PERIODS_PER_YEAR` is the sole `StateRuleKey` ever
+ * registered against `COUNT_BY_PAY_PERIOD`), the periods-per-year factor
+ * comes EXCLUSIVELY from the existing, unmodified
+ * `resolveStatePayPeriodsPerYear(ruleSet, payFrequency)` — no fallback to
+ * the generic calculator `periodsPerYear()`, no federal rule keys, no
+ * hardcoded frequency table — and `payFrequency` is the same, already-
+ * existing interpreter parameter `annualize()` already consumes, never a
+ * second/duplicated parameter.
+ *
+ * `resolveStatePayPeriodsPerYear()`'s own existing, tested failure
+ * semantics are propagated verbatim and unchanged: `RULE_MISSING`/
+ * `RULE_UNVERIFIED`/`RULE_DETAIL_INVALID` via `readDetail()`, and
+ * `SCENARIO_UNSUPPORTED` for both "no row for this frequency" and "row
+ * present with a null count," plus `SCENARIO_UNSUPPORTED` for a `null`
+ * `payFrequency` itself — identical to `annualize()`'s own null-check.
+ *
+ * NO ROUNDING: Task 4O-6R31/4O-6R38 lock rounding entirely outside the
+ * formula interpreter. Division here uses `divideHighPrecision()`
+ * (`lib/core/money.ts`, Task 4O-6R41/4O-6R44) rather than `divide()` —
+ * high-precision Decimal arithmetic at this module's configured working
+ * precision, explicitly NOT mathematically exact, and never consuming
+ * `WITHHOLDING_ROUNDING_POLICY` or any scale/`RoundingMode` of any kind.
+ * `resolveStatePayPeriodsPerYear()` already guarantees a strictly positive
+ * integer count on its `ok: true` path (schema-enforced), so
+ * `divideHighPrecision()`'s zero-divisor throw is structurally unreachable
+ * here and is not defensively caught (Task 4O-6R43 Error Propagation Lock).
+ *
+ * The integer count is converted to `Money` via `money(String(count))` —
+ * the same established pattern `annualize()`/`subtractAllowances()` already
+ * use for their own integer counts, never `money(count)`.
+ */
+function deannualize(
+  ruleSet: ResolvedStateRuleSet,
+  operandRef: string | null,
+  runningValue: Money,
+  payFrequency: string | null,
+): Read<Money> {
+  if (operandRef !== null) {
+    return readFail(
+      invalidDetail(
+        'DEANNUALIZE requires a null operandRef; the periods-per-year rule is resolved implicitly',
+      ),
+    );
+  }
+
+  if (payFrequency === null) {
+    return readFail(
+      stateUnavailable(
+        StateReason.SCENARIO_UNSUPPORTED,
+        'DEANNUALIZE requires a pay frequency; none is available and none is assumed',
+        StateRuleKey.WITHHOLDING_PAY_PERIODS_PER_YEAR,
+      ),
+    );
+  }
+
+  const periodsPerYear = resolveStatePayPeriodsPerYear(ruleSet, payFrequency);
+  if (!periodsPerYear.ok) {
+    return readFail(periodsPerYear.problem);
+  }
+
+  return readOk(divideHighPrecision(runningValue, money(String(periodsPerYear.value))));
+}
+
+/**
  * Runs a `WITHHOLDING_FORMULA`'s steps, in ascending `ordinal` order, over a
  * single running accumulator, starting from `initialValue`.
  *
  * `SUBTRACT_STANDARD_DEDUCTION`, `FLOOR_AT_ZERO`, `APPLY_BRACKETS`,
  * `SUBTRACT_EXEMPTIONS` (personal-exemption path only), `SUBTRACT_AMOUNT`,
  * `APPLY_FLAT_RATE`, `SUBTRACT_ALLOWANCES`, `ADD_AMOUNT`,
- * `APPLY_PERCENTAGE_OF`, and `ANNUALIZE` are implemented. Any other
- * operation — including `SUBTRACT_EXEMPTIONS` with an operandRef other than
- * `PIT_PERSONAL_EXEMPTION`, or `SUBTRACT_AMOUNT`/`APPLY_FLAT_RATE`/
+ * `APPLY_PERCENTAGE_OF`, `ANNUALIZE`, and `DEANNUALIZE` are implemented. Any
+ * other operation — including `SUBTRACT_EXEMPTIONS` with an operandRef other
+ * than `PIT_PERSONAL_EXEMPTION`, or `SUBTRACT_AMOUNT`/`APPLY_FLAT_RATE`/
  * `SUBTRACT_ALLOWANCES`/`ADD_AMOUNT`/`APPLY_PERCENTAGE_OF` with an invalid
- * operandRef, or `ANNUALIZE` with a non-null operandRef — reports
- * `METHOD_NOT_IMPLEMENTED` or `RULE_DETAIL_INVALID` respectively, rather
- * than being silently skipped or executed. Duplicate ordinals are never
- * silently ordered — they report `RULE_CONFLICT`, mirroring
+ * operandRef, or `ANNUALIZE`/`DEANNUALIZE` with a non-null operandRef —
+ * reports `METHOD_NOT_IMPLEMENTED` or `RULE_DETAIL_INVALID` respectively,
+ * rather than being silently skipped or executed. Duplicate ordinals are
+ * never silently ordered — they report `RULE_CONFLICT`, mirroring
  * `selectStateWithholdingTableRow()`'s identical treatment of ambiguous,
  * contradictory rule data (Task 4N-R).
  *
@@ -1036,6 +1115,12 @@ export function runStateWithholdingFormula(
       }
       case 'ANNUALIZE': {
         const result = annualize(ruleSet, step.operandRef, value, payFrequency);
+        if (!result.ok) return result;
+        value = result.value;
+        break;
+      }
+      case 'DEANNUALIZE': {
+        const result = deannualize(ruleSet, step.operandRef, value, payFrequency);
         if (!result.ok) return result;
         value = result.value;
         break;

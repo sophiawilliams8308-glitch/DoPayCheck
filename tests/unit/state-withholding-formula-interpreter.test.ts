@@ -33,16 +33,17 @@ import type { StateFormulaStepsDetail } from '@/lib/tax/state/rules/detailSchema
  * (Task 4O-6R20-6R23) has its own dedicated test file,
  * `state-withholding-formula-add-amount.test.ts`; and `APPLY_PERCENTAGE_OF`
  * (Task 4O-6R24-6R26) has its own dedicated test file,
- * `state-withholding-formula-apply-percentage-of.test.ts`; and `ANNUALIZE`
+ * `state-withholding-formula-apply-percentage-of.test.ts`; `ANNUALIZE`
  * (Task 4O-6R32-6R34) has its own dedicated test file,
- * `state-withholding-formula-annualize.test.ts` — all seven are therefore
+ * `state-withholding-formula-annualize.test.ts`; and `DEANNUALIZE` (Task
+ * 4O-6R38-6R45) has its own dedicated test file,
+ * `state-withholding-formula-deannualize.test.ts` — all eight are therefore
  * excluded from this file's "unsupported operation" list below.
- * The remaining two operations (`ROUND`, `DEANNUALIZE`) are asserted to
- * report `METHOD_NOT_IMPLEMENTED` rather than silently executing — their own
- * semantics are NOT locked: `ROUND` was explicitly locked outside this
- * interpreter's scope entirely (Task 4O-6R31), and `DEANNUALIZE` was left
- * separately unresolved (Task 4O-6R33 §5) due to its own rounding-policy
- * precision question.
+ * The one remaining operation (`ROUND`) is asserted to report
+ * `METHOD_NOT_IMPLEMENTED` rather than silently executing — its own
+ * semantics are NOT locked: it was explicitly locked outside this
+ * interpreter's scope entirely (Task 4O-6R31), belonging to a future,
+ * separate state rounding stage rather than a formula-step operation.
  * ===========================================================================
  *
  * Fixtures use RESERVED TEST jurisdiction/source ids and no real tax value.
@@ -543,7 +544,7 @@ describe('multiple formula steps', () => {
 });
 
 describe('unsupported operations do not silently execute', () => {
-  const unsupported = ['ROUND', 'DEANNUALIZE'] as const;
+  const unsupported = ['ROUND'] as const;
 
   it.each(unsupported)(
     'reports METHOD_NOT_IMPLEMENTED for %s rather than inventing a result',
