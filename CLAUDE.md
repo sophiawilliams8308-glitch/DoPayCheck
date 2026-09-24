@@ -111,30 +111,59 @@ Non-negotiable rules, condensed. Full detail: `docs/SPECIFICATION.md`.
 
 ```text
 Branch:              claude/upbeat-dirac-qqhuye
-HEAD:                95f3456
-Working tree:        NOT clean — Steps 3.3, 3.4, 3.5 (provenance-corrected), 3.6, 3.7 all
-                      implemented, uncommitted
-Last verified checkpoint: 95f3456 — docs: add persistent Claude project memory system
+HEAD:                3d6302c
+Working tree:        Clean — nothing uncommitted.
+Last verified checkpoint: 3d6302c — feat: implement deannualize formula operation
 Current phase:       Phase 5 — 50-State Engine
-Current step:        Step 3.7 (assembleStateRuleSet) — COMPLETE, awaiting commit approval.
-                      Step 3 (State Rule Resolver) is now fully implemented end to end.
+Current step:        Step 3 (State Rule Resolver) COMPLETE and committed. Step 4 (State Tax
+                      Calculation) is well underway: the withholding-formula interpreter
+                      implements 11 of its 12 operations (only `ROUND` remains unresolved,
+                      by design — see §7).
 ```
+
+**Disclosure note (2026-09-24 reconciliation):** this section previously stated `HEAD: 95f3456`
+with Steps 3.3–3.7 "implemented, uncommitted" long after the repository had moved ~18 commits
+past that point (all the way through `3d6302c`), with the intervening commits never recorded
+anywhere in this file. That staleness was first noticed during an unrelated task (DM-04) and a
+correction to this section was made in that session, but — because this file's own rule (§19,
+project git discipline) is to leave a documentation-only edit uncommitted unless a commit is
+explicitly requested, and the session's container is ephemeral — that fix never reached a commit
+and was lost when the container recycled. This is the second, now-committed correction; §7 and
+§11 below have also been reconciled against `git log` for the full `95f3456..3d6302c` range.
+**Lesson for future sessions: if a correction to this file matters, say so explicitly and ask for
+it to be committed — an uncommitted fix in a cloud session does not survive.**
 
 ---
 
 ## 6. Current Phase / Step
 
-**Phase 5 — 50-State Engine**, Step 3 (State Rule Resolver), sub-step 3.7
-(`assembleStateRuleSet`) — COMPLETE, uncommitted. This completes Step 3 end to end.
+**Phase 5 — 50-State Engine.** Step 3 (State Rule Resolver) is COMPLETE and committed
+(`7717e6a`). Step 4 (State Tax Calculation) is now the active step and is substantially
+implemented across 18 further commits (`7717e6a`..`3d6302c` — see §7 for the full,
+commit-by-commit breakdown; §11 for the checkpoint table).
 
 Completed within Step 3: 3.1 (Resolution Context), 3.2 (Context Validation), Amendment 2
 (structural-only jurisdiction validation), Amendment 3 (explicit capability request source),
 3.3 (Coverage Gate), 3.4 (F-02 capability → rule-key mapping), 3.5 (candidate retrieval,
 provenance-corrected), 3.6 (candidate resolution decision — RESOLVED/NOT_FOUND/AMBIGUOUS per
 key), 3.7 (final `ResolvedStateRuleSet` assembly). Pipeline positions "fixEffectiveInstant"
-and "identifyJurisdictions" remain intentionally skipped (owner decision) — see §9. Step 3.8+
-(if any; e.g. wiring this resolver into a caller/Stage B) is next but NOT started, and was
-not requested.
+and "identifyJurisdictions" remain intentionally skipped (owner decision) — see §9.
+
+Completed within Step 4 so far (Tasks 4A–4O-6R45, per the commits' own doc-comment task
+numbering — see §7 for detail on each): the safe rule-detail reader primitives, the
+Context-Driven State Taxability wage-bucket derivation (Option A), the Phase 3↔Phase 5 state
+options/deduction bridge, `buildStateCalculationContext()`, dedicated readers for
+`WITHHOLDING_METHOD`/`WITHHOLDING_PAY_PERIODS_PER_YEAR`/`WITHHOLDING_FILING_STATUS_MAP`/
+`WITHHOLDING_TABLE` (row selection)/`WITHHOLDING_FORMULA`, and the `WITHHOLDING_FORMULA`
+interpreter itself, which as of `3d6302c` implements 11 of its 12 contract operations
+(`SUBTRACT_STANDARD_DEDUCTION`, `FLOOR_AT_ZERO`, `APPLY_BRACKETS`, `SUBTRACT_EXEMPTIONS`
+[personal-exemption path only], `SUBTRACT_AMOUNT`, `APPLY_FLAT_RATE`, `SUBTRACT_ALLOWANCES`,
+`ADD_AMOUNT`, `APPLY_PERCENTAGE_OF`, `ANNUALIZE`, `DEANNUALIZE`). `ROUND` remains
+architecturally excluded from this interpreter by an explicit owner decision (Task 4O-6R31) —
+it belongs to a future, separate state rounding stage, not a formula-step operation. The
+dependent-exemption path of `SUBTRACT_EXEMPTIONS` (`PIT_DEPENDENT_EXEMPTION`) also remains
+unresolved. Wiring `runStateWithholdingFormula()` into an actual end-to-end caller/Stage B is
+NOT started, and was not requested.
 
 ---
 
@@ -182,7 +211,9 @@ typecheck/lint/format/build/Prisma validate all clean.
 Important: F-02 (capability → rule-key mapping) remains untouched and blocking.
 
 ### Phase 5 — Step 3.3: Coverage Gate
-Status: COMPLETE, uncommitted (implemented on top of `95f3456`, awaiting commit approval)
+Status: COMPLETE — committed in `7717e6a` (2026-09-20), bundled together with Steps 3.4–3.7
+below and with the Task 1–4C foundational primitives (see the dedicated entry after §7's
+Step 3.7 entry).
 Scope:
 - New module `lib/tax/state/coverageGate.ts`: `consultCoverage(matrix, jurisdictionCode,
   capability)` — pure, synchronous, zero-query. Consults Step 2's `CoverageMatrix` via the
@@ -203,7 +234,7 @@ Important: F-02 remains untouched and blocking — no capability → rule-key ma
 anywhere in this module. Step 3.4 (candidate retrieval) was not started.
 
 ### Phase 5 — Step 3.4: F-02 Capability → Rule-Key Mapping
-Status: COMPLETE, uncommitted (implemented on top of `95f3456`, awaiting commit approval)
+Status: COMPLETE — committed in `7717e6a` (2026-09-20), bundled with Steps 3.3, 3.5–3.7.
 Scope:
 - New module `lib/tax/state/capabilityRuleKeys.ts`: `CAPABILITY_RULE_KEYS` — a complete,
   frozen `Record<CapabilityCode, readonly StateRuleKey[]>` covering all 13 `StateCapability`
@@ -226,7 +257,8 @@ clean.
 Important: Step 3.5 (candidate retrieval, which will consume this mapping) was NOT started.
 
 ### Phase 5 — Step 3.5: Candidate Retrieval (`retrieveCandidates`)
-Status: COMPLETE, uncommitted (implemented on top of `95f3456`, awaiting commit approval)
+Status: COMPLETE — committed in `7717e6a` (2026-09-20), bundled with Steps 3.3, 3.4, 3.6, 3.7
+(including the provenance-preservation fix below).
 Scope:
 - New module `lib/tax/state/rules/candidateRetrieval.ts`: `retrieveCandidates(jurisdictionCode,
   calculationDate, ruleKeys)` — the first Phase 5 Step 3 module that touches the database.
@@ -263,7 +295,8 @@ with an intentionally unscoped `listByType('STATE')` assertion (its own comments
 file occasionally reproduces that documented race. Confirmed via repeated runs that this is
 pre-existing and unrelated to Step 3.5's own logic — not modified, per scope.
 
-**Follow-up correction (2026-09-20 — Provenance Preservation Fix, uncommitted):** A Step 3.7
+**Follow-up correction (2026-09-20 — Provenance Preservation Fix, committed in `7717e6a`
+alongside Step 3.7 itself):** A Step 3.7
 implementation attempt found that the original candidate shape here (bare Phase 2
 `ResolvableRule`) discarded `jurisdictionCode`, `sourceIds`, `verified`, the rule's
 `detail`/payload, and its own `verificationStatus` — fields required to honestly construct
@@ -285,7 +318,7 @@ unimplemented and out of scope for this fix. See
 full detail.
 
 ### Phase 5 — Step 3.6: Candidate Resolution (`resolveCandidates`)
-Status: COMPLETE, uncommitted (implemented on top of `95f3456`, awaiting commit approval)
+Status: COMPLETE — committed in `7717e6a` (2026-09-20), bundled with Steps 3.3–3.5, 3.7.
 Scope:
 - New module `lib/tax/state/rules/resolveCandidates.ts`: `resolveCandidates(candidateGroups:
   readonly StateRuleCandidates[]): StateRuleResolutionResult` — pure, synchronous,
@@ -309,7 +342,10 @@ full-suite tests passed (1 skipped by design); typecheck/lint/format/build/Prism
 all clean.
 
 ### Phase 5 — Step 3.7: Final Assembly (`assembleStateRuleSet`)
-Status: COMPLETE, uncommitted (implemented on top of `95f3456`, awaiting commit approval)
+Status: COMPLETE — committed in `7717e6a` (2026-09-20), bundled with Steps 3.3–3.6. This
+single commit's message is `feat: complete state tax foundation through task 4c` — it commits
+Step 3.3–3.7 (State Rule Resolver, end to end) together with the first wave of Step 4 (State
+Tax Calculation) foundational primitives, documented as their own entry immediately below.
 Scope:
 - New module `lib/tax/state/rules/assembleStateRuleSet.ts`: `assembleStateRuleSet(resolution:
   StateRuleResolutionResult, metadata: StateRuleSetAssemblyMetadata): ResolvedStateRuleSet` —
@@ -355,6 +391,351 @@ jurisdiction-mismatch test) + 9 new guard/scanner tests; 372 Phase 5 state tests
 full-suite tests passed (1 skipped by design); typecheck/lint/format/build/Prisma validate all
 clean.
 
+**Reconciliation note (2026-09-24):** the five Step 3.3–3.7 entries above, and everything
+below through the end of Step 4's current work, were reconstructed from `git log`/`git show`
+against the `95f3456..3d6302c` commit range after this file was found ~18 commits stale (see
+§5's disclosure note). Every "Verification" line below states exactly what a commit's own
+message or diff records — where a commit adds or modifies test files but its message/diff
+states no pass/fail counts, that is written explicitly as **"Verification: not recorded in
+commit history"** rather than a guessed number, per this project's own rule against inventing
+verification claims (§4, §9 of `docs/SPECIFICATION.md`; CLAUDE.md §3 above).
+
+### Phase 5 — Step 4, Tasks 1–4C: State Rule-Detail Readers & Wage-Bucket Foundation
+Status: COMPLETE — committed in `7717e6a` (2026-09-20), the same commit as Steps 3.3–3.7 above.
+Scope (per the commit's own message and the new files' doc comments):
+- `lib/tax/state/rules/read-detail.ts`: safe, schema-validated, verification-checked rule
+  detail reader for the state namespace — `readOk`/`readFail`/`readDetail`/`requireComponent`/
+  `readRate`/`requireForFilingStatus`. The state-namespaced analog of
+  `lib/tax/federal/rules/read-detail.ts`; answers only "is this rule key's detail safe to read,
+  and if so, here it is" — never computes a tax, withholding amount, wage-base cap, or rounded
+  figure. Reads only from an already-frozen `ResolvedStateRuleSet` (Step 3.7's output) via the
+  existing `stateRule()` accessor — no database access, no re-resolution.
+- `lib/tax/state/rules/withholdingRoundingPolicy.ts`: `readWithholdingRoundingPolicy()` — a
+  dedicated reader for `STATE.WITHHOLDING.ROUNDING_POLICY`, built on `readDetail()`. Reads the
+  policy only; does not itself round any `Money` value (that belongs to a later calculation
+  stage, mirroring the federal engine's own read/apply split).
+- `lib/tax/state/rules/wageBase.ts`: `applyStateWageBase()` — one generic wage-base/cap
+  primitive shared by `SDI_WAGE_BASE`, `PFML_WAGE_BASE`, and `SUTA_WAGE_BASE` (all validate
+  under the same `stateWageBaseDetailSchema`). A simple current-input clamp, not a YTD
+  wage-base tracker; explicitly wage-base only, never a contribution-cap or rate calculation.
+- `lib/tax/state/rules/taxabilityProfile.ts`: `readTaxabilityProfile()` — reader only for
+  `STATE.TAXABILITY_PROFILE`; wage-bucket derivation from it is explicitly NOT implemented
+  here (disclosed as needing more architecture than the repository yet supplies — see the
+  module's own doc comment for the enumerated gaps).
+- **Task 4B decision — Option A, Context-Driven State Taxability:** `StateCalculationContext`
+  gained `deductions`/`taxabilityProfiles` fields (`lib/tax/state/context.ts`) and
+  `lib/tax/state/types.ts` gained `StateDeductionLine`. Taxability is supplied by the caller as
+  context, not resolved internally by this stage.
+- `lib/tax/state/wages/stateWageBuckets.ts`: `deriveStateWageBuckets()` — Task 4C, the pure
+  calculation half of the Task 4B Option A contract. Derives the four independent state wage
+  buckets (`stateIncomeTaxWages`, `sdiWages`, `pfmlWages`, `sutaWages`) from context-supplied
+  `deductions`/`taxabilityProfiles` only — does not resolve where those inputs come from.
+Verification: not recorded in commit history. The commit's own diff adds four new test files
+(`state-read-detail.test.ts`, `state-rounding-policy-reader.test.ts`,
+`state-rule-set-assembly.test.ts`, and extensions to `state-guards.test.ts`) totaling roughly
+1,200 added test lines, but neither the commit message nor its body states a pass/fail count
+for this range — the last stated total in this file (938 full-suite tests passed, 1 skipped)
+predates these additions and should not be read as covering them.
+Important: `taxabilityProfile.ts` explicitly defers wage-bucket derivation logic to
+`stateWageBuckets.ts` rather than implementing it inline — the two-module split is a stated
+design choice, not an oversight.
+
+### Phase 5 — Step 4, Task 4G/4H: State Options & Deduction Bridge (`state-bridge.ts`)
+Status: COMPLETE — Commit `ff0616f` (2026-09-21)
+Scope: New module `lib/calculator/state-bridge.ts`, mirroring `federal-bridge.ts`'s existing
+shape (not its data): `StateOptions` (carries a resolved `ResolvedStateRuleSet` plus optional
+caller-supplied `taxabilityProfiles`, per Task 4B Option A — never resolved via
+`TAXABILITY_PROFILE` internally) and `toStateDeductions()`, which maps the same
+`DeductionResult[]` already computed once by `calculateDeductions()` onto
+`StateDeductionLine[]` — one output per input, no re-derivation, no re-rounding, no taxability
+read at this stage (taxability inclusion was already decided upstream; state taxability is a
+separate, later input). `CalculationOptions.state` is not yet read by `calculatePaycheck()` —
+this commit implements only the bridge contract, not its wiring.
+Verification: not recorded in commit history. Adds `tests/unit/state-bridge.test.ts` (271
+lines) and a small `lib/calculator/index.ts` addition, but the commit message states no
+pass/fail counts.
+Important: never reuses the federal engine's own deduction/taxability values — a state
+deduction line is always produced from this bridge's own inputs.
+
+### Phase 5 — Step 4, Task 4I: State Calculation Context Builder
+Status: COMPLETE — Commit `56b2d0f` (2026-09-21)
+Scope: New module `lib/calculator/state-context.ts`: `buildStateCalculationContext()` —
+structural assembly only, not a calculation. Assembles an already-known `CalculationInput`, an
+already-resolved `StateOptions`, and an already-computed `DeductionResult[]` into a
+`StateCalculationContext`. Resolves no rules, calculates no tax, derives no wage bucket.
+Disclosed deviation from the Task 4G-sketched signature: takes `grossRegular`/
+`grossSupplemental` as two additional explicit parameters, mirroring
+`runFederalEngine(input, grossRegular, grossSupplemental, ...)` exactly, because
+`CalculationInput` carries no pre-computed gross-wage figures.
+Explicitly refuses to guess: `residencyStatus` (throws if absent — no default), the residence
+jurisdiction (no fallback when unresolvable), and `residenceRuleSet` when the residence
+jurisdiction differs from the one resolved rule set's own jurisdiction (a disclosed, unresolved
+architecture gap, not invented around). Two purely operational flags ARE defaulted, mirroring
+`FederalOptions`' own established convention: `reciprocityCertificateFiled` defaults to
+`false`, and `includeEmployerTaxes` is hardcoded `true` (no equivalent field exists yet on
+`StateOptions`).
+Verification: not recorded in commit history. Adds `tests/unit/state-context.test.ts` (358
+lines); commit message states no pass/fail counts.
+Important: the residence-rule-set gap (one resolved rule set can only ever represent one
+jurisdiction, but residence and work jurisdiction can differ) is flagged as a genuine,
+unresolved architecture question in the module's own doc comment — not fixed here.
+
+### Phase 5 — Step 4, Task 4J: Withholding Method Reader
+Status: COMPLETE — Commit `31b4b4d` (2026-09-21)
+Scope: New module `lib/tax/state/rules/withholdingMethod.ts`: `readWithholdingMethod()` —
+reads `STATE.WITHHOLDING.METHOD` verbatim via `readDetail()`. Reader only: does not dispatch
+on the resolved `structure` (`NONE | FLAT | PROGRESSIVE | TABLE | FORMULA | HYBRID`) to any
+calculation path — that dispatch, and every downstream calculation it would select, remains
+future work.
+Verification: not recorded in commit history. Adds `tests/unit/state-withholding-method.test.ts`
+(297 lines); commit message states no pass/fail counts.
+
+### Phase 5 — Step 4, Task 4K: Withholding Pay-Periods-Per-Year Reader
+Status: COMPLETE — Commit `939e37c` (2026-09-21)
+Scope: New module `lib/tax/state/rules/withholdingPayPeriods.ts`:
+`resolveStatePayPeriodsPerYear()` — reads `STATE.WITHHOLDING.PAY_PERIODS_PER_YEAR` as a
+separate, jurisdiction-published, rule-sourced fact. Explicitly has NO dependency on and NO
+fallback to the generic Phase 3 calendar table (`lib/calculator/pipeline/pay-frequency.ts`'s
+`periodsPerYear()`) — the two sources are never reconciled. A missing row, or a row whose
+`periodsPerYear` is `null`, reports `SCENARIO_UNSUPPORTED` — never inferred from the generic
+calendar table, never treated as zero. Reader only — does not implement `ANNUALIZE`/
+`DEANNUALIZE` execution (later commits `3d7a9a5`/`3d6302c` do).
+Verification: not recorded in commit history. Adds
+`tests/unit/state-withholding-pay-periods.test.ts` (294 lines); commit message states no
+pass/fail counts.
+
+### Phase 5 — Step 4, Task 4L: Withholding Filing-Status-Map Reader
+Status: COMPLETE — Commit `6e53d68` (2026-09-21)
+Scope: New module `lib/tax/state/rules/withholdingFilingStatusMap.ts`:
+`readWithholdingFilingStatusMap()` — reads `STATE.WITHHOLDING.FILING_STATUS_MAP` verbatim.
+Reader only: does not look up a status, does not translate a state filing status into a
+federal one, does not touch `StateCalculationContext`. The module's own doc comment discloses
+that an audit found NO current consumer of this rule key anywhere in the repository, and
+whether/how a future TABLE or FORMULA implementation should use this data remains an
+explicitly open question. (In practice, every later formula-interpreter operation that needs a
+filing status — `SUBTRACT_STANDARD_DEDUCTION`, `SUBTRACT_EXEMPTIONS`, `APPLY_BRACKETS` — uses
+the state-native filing status directly, never mapped through this rule.)
+Verification: not recorded in commit history. Adds
+`tests/unit/state-withholding-filing-status-map.test.ts` (298 lines); commit message states no
+pass/fail counts.
+
+### Phase 5 — Step 4, Task 4N-R: Withholding Table Row Selector
+Status: COMPLETE — Commit `f175747` (2026-09-21)
+Scope: New module `lib/tax/state/rules/withholdingTable.ts`:
+`selectStateWithholdingTableRow()` — selection only; does not compute
+`baseWithholding + rate × excess` or any withholding amount. Filing status matched
+state-native, directly (never via `WITHHOLDING_FILING_STATUS_MAP`) — a `null` filing status
+reports `SCENARIO_UNSUPPORTED`. Wage ranges use half-open `[wageFrom, wageTo)` semantics,
+evidenced by `lib/rules/validation.ts`'s existing contiguity check. The supplied wage is the
+current pay-period wage for the row's own `payFrequency` — never annualized here, never
+multiplied by a periods-per-year factor. Zero matches or multiple matches both report
+`RULE_CONFLICT` — never resolved by `ordinal` or array order.
+Verification: not recorded in commit history. Adds `tests/unit/state-withholding-table.test.ts`
+(313 lines); commit message states no pass/fail counts.
+
+### Phase 5 — Step 4, Task 4O-1: Withholding Formula Reader
+Status: COMPLETE — Commit `9fe279f` (2026-09-21)
+Scope: New module `lib/tax/state/rules/withholdingFormula.ts`: `readWithholdingFormula()` —
+reads `STATE.WITHHOLDING.FORMULA` verbatim (every step's `ordinal`, `operation`, `operandRef`
+— including `null` — and `note`, in exactly the stored order). Reader only. The module's doc
+comment records that a preceding Task 4O contract audit found the interpreter itself BLOCKED
+BY SPEC GAPS (an unconstrained `operandRef` vocabulary, an undecided execution model, undecided
+filing-status consumption, undecided `ANNUALIZE`/`DEANNUALIZE` periods-per-year source) — none
+of that is decided by this reader; the interpreter contract was locked afterward as "Task 4O-2"
+and implemented starting with the next commit.
+Verification: not recorded in commit history. Adds
+`tests/unit/state-withholding-formula.test.ts` (339 lines); commit message states no pass/fail
+counts.
+
+### Phase 5 — Step 4, Task 4O-2/4O-3A: Withholding Formula Core Interpreter
+Status: COMPLETE — Commit `d19e1b3` (2026-09-21)
+Scope: New module `lib/tax/state/rules/withholdingFormulaInterpreter.ts`, implementing the
+three operations the Task 4O-2 contract lock fully established: `SUBTRACT_STANDARD_DEDUCTION`
+(resolves `WITHHOLDING_STANDARD_DEDUCTION` via the existing `requireForFilingStatus()`; no
+`PER_PERIOD` annualize/deannualize conversion invented), `FLOOR_AT_ZERO`, and `APPLY_BRACKETS`.
+Execution model (Task 4O-2 §1, locked): steps run in strict `ordinal` order over a single
+running `Money` accumulator — no named intermediate variable, no step-to-step reference.
+`operandRef` vocabulary (Task 4O-2 §2, locked): names a `StateRuleKey` and nothing else at
+this point (the later `ADD_AMOUNT` exception to this rule is a separately-locked deviation —
+see the `ff808ac` entry below). Filing status (Task 4O-2 §5) is used state-native, directly,
+never mapped through `WITHHOLDING_FILING_STATUS_MAP`. The nine remaining operations
+(`SUBTRACT_EXEMPTIONS`, `SUBTRACT_ALLOWANCES`, `SUBTRACT_AMOUNT`, `ADD_AMOUNT`,
+`APPLY_FLAT_RATE`, `APPLY_PERCENTAGE_OF`, `ANNUALIZE`, `DEANNUALIZE`, `ROUND`) are contractually
+unresolved at this commit and report `METHOD_NOT_IMPLEMENTED` rather than being silently
+skipped or executed. Exports `runStateWithholdingFormula()`.
+Verification: not recorded in commit history. Adds
+`tests/unit/state-withholding-formula-interpreter.test.ts` (678 lines); commit message states
+no pass/fail counts.
+Important: duplicate `ordinal`s are never silently ordered — reported, not tolerated (per the
+function's own doc comment).
+
+### Phase 5 — Step 4, Task 4O-4/4O-5: `SUBTRACT_EXEMPTIONS` (Personal-Exemption Path)
+Status: COMPLETE — Commit `f8b2814` (2026-09-21)
+Scope: Extends `withholdingFormulaInterpreter.ts` with `SUBTRACT_EXEMPTIONS`, PERSONAL
+EXEMPTION PATH ONLY. `operandRef` is required and must equal exactly
+`StateRuleKey.PIT_PERSONAL_EXEMPTION` — never `null`, never `PIT_DEPENDENT_EXEMPTION` — because
+two independently-shaped exemption rule keys exist and a `null` operandRef would be ambiguous
+between them (unlike `SUBTRACT_STANDARD_DEDUCTION`, which has exactly one implicit target).
+Filing status used state-native, via the same `requireForFilingStatus()` call shape already
+used for the standard deduction. Unit handling (`ANNUAL`/`PER_PERIOD`) is explicitly out of
+scope — no conversion performed, a disclosed project-wide gap. `PIT_DEPENDENT_EXEMPTION`
+remains unresolved and unimplemented: presenting it as `operandRef` fails
+`RULE_DETAIL_INVALID`, never tolerated as merely unsupported.
+Verification: not recorded in commit history. Adds
+`tests/unit/state-withholding-formula-subtract-exemptions.test.ts` (393 lines) and extends the
+core interpreter test file; commit message states no pass/fail counts.
+
+### Phase 5 — Step 4, Task 4O-6R4/4O-6R5/4O-6R6: Scalar Amount Infrastructure + `SUBTRACT_AMOUNT`
+Status: COMPLETE — Commit `37d5506` (2026-09-21)
+Scope:
+- `lib/tax/state/rules/detailSchemas.ts`: new `stateScalarAmountDetailSchema`/
+  `StateScalarAmountDetail` — a single generic scalar monetary amount (`{ shape:
+  'SCALAR_AMOUNT', unit, amount }`), explicitly generic infrastructure with no built-in tax
+  meaning, mirroring federal's own `scalarAmountDetailSchema` as architectural precedent only
+  (no federal code imported). Deliberately NOT yet registered in `STATE_DETAIL_SCHEMAS` — no
+  `StateRuleKey` for a generic scalar amount exists yet, and Task 4O-6R4 explicitly locked that
+  none may be invented merely to exercise this schema.
+- `withholdingFormulaInterpreter.ts`: new `SUBTRACT_AMOUNT` operation — a generic scalar-amount
+  primitive with no built-in real-world tax meaning; `operandRef` is required, validated
+  against the full `StateRuleKey` membership set, and must resolve to a `SCALAR_AMOUNT`
+  shape (any other shape fails `RULE_DETAIL_INVALID`). Amount resolution uses the existing
+  `requireComponent()` (not `requireForFilingStatus()`, since `SCALAR_AMOUNT` has no
+  filing-status dependence) — a `null` amount reports `COMPONENT_NOT_STATED`, never zero.
+Verification: not recorded in commit history. Adds
+`tests/unit/state-detail-schemas.test.ts` (134 lines) and
+`tests/unit/state-withholding-formula-subtract-amount.test.ts` (294 lines); commit message
+states no pass/fail counts.
+
+### Phase 5 — Step 4, Task 4O-6R9–4O-6R12: `APPLY_FLAT_RATE`
+Status: COMPLETE — Commit `7dc01d0` (2026-09-21)
+Scope: Extends `withholdingFormulaInterpreter.ts` with `APPLY_FLAT_RATE` — generic over any
+`RATE`-shaped `StateRuleKey`. `operandRef` required, validated against `VALID_RULE_KEYS`, must
+resolve to a `RATE` shape. Consults the rate's own `applicability`/`appliesTo` fields: a
+`NOT_APPLICABLE` operandRef in the jurisdiction, or a rate that `appliesTo` EMPLOYER rather
+than EMPLOYEE, both fail rather than being silently applied — these two checks are flagged as
+OWNER-LOCKED DECISIONS (Task 4O-6R11), not derived from an existing precedent (Task 4O-6R10
+found no real formula example proving the exact shape needed).
+Verification: not recorded in commit history. Adds
+`tests/unit/state-withholding-formula-apply-flat-rate.test.ts` (377 lines); commit message
+states no pass/fail counts.
+
+### Phase 5 — Step 4, Task 4O-6R14–4O-6R16: Allowance-Count Context
+Status: COMPLETE — Commit `f248350` (2026-09-21)
+Scope: Plumbs allowance counts through the input/context layers ahead of implementing
+`SUBTRACT_ALLOWANCES` itself:
+- `lib/calculator/types/input.ts`: new `StateInput.allowanceCounts?: Readonly<Record<string,
+  number>>` — keyed by the exact state rule key an allowance-value rule resolves under (e.g.
+  `STATE.WITHHOLDING.ALLOWANCE_VALUE`), never by allowance type, never one global formula-wide
+  count. State-native only — never derived from `w4.pre2020Allowances`.
+- `lib/calculator/validation/input-schema.ts`: validates each count as a non-negative integer
+  — no coercion, no rounding, no default.
+- `lib/tax/state/context.ts`: `StateCalculationContext.allowanceCounts:
+  Readonly<Partial<Record<StateRuleKey, number>>>` — required (not optional); an empty object
+  is the valid representation of "no counts supplied," matching the context's existing
+  `taxabilityProfiles`/`deductions` convention.
+- `lib/calculator/state-context.ts`: `mapAllowanceCounts()` — a pure passthrough of the input's
+  free-string keys onto the context's `StateRuleKey`-keyed shape; deliberately does NOT
+  validate keys against `StateRuleKey` membership (that remains `readDetail()`'s job at actual
+  resolution time, avoiding a second, independently-drifting membership check).
+Verification: not recorded in commit history. Adds `tests/unit/state-input-extensions.test.ts`
+(48 lines) and extends four existing test files; commit message states no pass/fail counts.
+
+### Phase 5 — Step 4, Task 4O-6R14–4O-6R17: `SUBTRACT_ALLOWANCES`
+Status: COMPLETE — Commit `04ba18c` (2026-09-21)
+Scope: Extends `withholdingFormulaInterpreter.ts` with `SUBTRACT_ALLOWANCES` — generic over any
+`AMOUNT_PER_ALLOWANCE`-shaped `StateRuleKey`, consuming the `allowanceCounts` map plumbed
+through in the prior commit as the function's fifth parameter. `operandRef` required, validated
+against `VALID_RULE_KEYS`. `allowanceType` on the resolved detail is DESCRIPTIVE METADATA ONLY
+(Task 4O-6R15 §7) — matching is by `operandRef`/rule key, never by `allowanceType`. A
+`NOT_APPLICABLE` rate in the jurisdiction fails (mirrors `APPLY_FLAT_RATE`'s own check). No
+allowance count supplied for the specific key reports `COMPONENT_NOT_STATED` — never treated as
+zero. The re-validation of the context layer (`validateStateContext()`) is explicitly assumed
+already done, not repeated here (Task 4O-6R15 §13).
+Verification: not recorded in commit history. Adds
+`tests/unit/state-withholding-formula-subtract-allowances.test.ts` (489 lines) and extends
+three existing test files; commit message states no pass/fail counts.
+
+### Phase 5 — Step 4, Task 4O-6R20–4O-6R23: `ADD_AMOUNT`
+Status: COMPLETE — Commit `ff808ac` (2026-09-22)
+Scope:
+- `lib/tax/state/context.ts`: `resolveWorkJurisdictionElections()` — resolves the current WORK
+  jurisdiction's (never residence) submitted election values into a narrow `fieldKey`-keyed
+  map; pure passthrough, no form-schema validation, no unit conversion. Also hardens
+  `validateStateContext()` to detect a duplicate election `fieldKey` within one jurisdiction's
+  own `values[]` (`INPUT_INVALID`) — a duplicate is never arbitrated, only reported, and the
+  same `fieldKey` may still legitimately appear once in each of two different jurisdictions.
+- `withholdingFormulaInterpreter.ts`: new `ADD_AMOUNT` operation — the one deliberate exception
+  to the "`operandRef` names a `StateRuleKey`" rule locked in Task 4O-2 §2: here `operandRef`
+  names an election **`fieldKey`** instead, and is never checked against `VALID_RULE_KEYS`
+  (Task 4O-6R21 §3/§4 found no composite-identifier convention anywhere in the repository to
+  do otherwise). Consumes the resolved, `fieldKey`-keyed election map as its sixth parameter. A
+  field absent from the resolved `WITHHOLDING_ELECTION_FORM`, or with no submitted value,
+  reports `COMPONENT_NOT_STATED`, never zero.
+Verification: not recorded in commit history. Adds
+`tests/unit/state-withholding-formula-add-amount.test.ts` (740 lines) and
+`tests/unit/state-contracts.test.ts` extensions (227 lines); commit message states no pass/fail
+counts (this commit has no commit-message body at all, unlike most others in this range).
+
+### Phase 5 — Step 4, Task 4O-6R24–4O-6R26: `APPLY_PERCENTAGE_OF`
+Status: COMPLETE — Commit `c4559d1` (2026-09-22)
+Scope: Extends `withholdingFormulaInterpreter.ts` with `APPLY_PERCENTAGE_OF` — generic over any
+`RATE`-shaped `StateRuleKey`, like `APPLY_FLAT_RATE`, reusing its `operandRef` validation and
+`applicability`/`appliesTo` handling, but computing `runningValue × (1 + rate)` rather than
+`runningValue × rate`. **This arithmetic choice is an explicit owner decision (Task
+4O-6R26-OWNER)** — the commit's own doc comment records that no repository evidence resolved
+which of the two formulas ("percentage of" vs. "plus a percentage") was intended, so it was
+not inferred or guessed.
+Verification: not recorded in commit history. Adds
+`tests/unit/state-withholding-formula-apply-percentage-of.test.ts` (413 lines); commit message
+states no pass/fail counts (this commit also has no commit-message body).
+
+### Phase 5 — Step 4, Task 4O-6R32/4O-6R33: `ANNUALIZE`
+Status: COMPLETE — Commit `3d7a9a5` (2026-09-22)
+Scope: Extends `withholdingFormulaInterpreter.ts` with `ANNUALIZE` — contract-locked null
+`operandRef` (no disambiguation between competing keys is possible, so none is accepted).
+Computes `runningValue × periodsPerYear` via the existing, unmodified
+`resolveStatePayPeriodsPerYear()` (`939e37c`), consuming a new, narrow `payFrequency` parameter
+(the function's seventh parameter) — structurally identical in role to `filingStatus`, never
+the whole `StateCalculationContext`. `DEANNUALIZE`'s own division was explicitly left
+unresolved by this commit (Task 4O-6R33 §5) pending a separate precision decision — implemented
+next, in `3d6302c`.
+Verification: not recorded in commit history. Adds
+`tests/unit/state-withholding-formula-annualize.test.ts` (590 lines); commit message states no
+pass/fail counts.
+
+### Phase 5 — Step 4, Task 4O-6R38–4O-6R45: `DEANNUALIZE`
+Status: COMPLETE — Commit `3d6302c` (2026-09-22, current HEAD as of this reconciliation)
+Scope:
+- `lib/core/money.ts`: new `divideHighPrecision(a, b)` — divides at the module's configured
+  Decimal.js working precision with NO currency or intermediate rounding applied. Explicitly
+  documented as NOT mathematically exact for a non-terminating quotient (a finite
+  approximation bounded by working precision, not an infinitely precise rational value).
+  Throws `MoneyError` on division by zero, not defensively caught by its caller (Task 4O-6R43
+  Error Propagation Lock).
+- `withholdingFormulaInterpreter.ts`: new `DEANNUALIZE` operation — the inverse of `ANNUALIZE`:
+  contract-locked null `operandRef`, computing `runningValue ÷ periodsPerYear` via the same
+  `resolveStatePayPeriodsPerYear()` and the same `payFrequency` parameter, but dividing via the
+  new `divideHighPrecision()` rather than `divide()` — high-precision, explicitly NOT
+  mathematically exact, and never touching `WITHHOLDING_ROUNDING_POLICY` or any
+  scale/`RoundingMode`. This resolves the rounding-policy precision conflict `3d7a9a5` (Task
+  4O-6R33 §5) left open. `ROUND` remains the one operation still architecturally excluded from
+  this interpreter entirely (Task 4O-6R31) — belongs to a future, separate state rounding
+  stage, never a formula-step operation.
+- As of this commit, the interpreter's own doc comment states it "IMPLEMENTS ELEVEN
+  OPERATIONS" — every contract operation except `ROUND`, and except the dependent-exemption
+  path of `SUBTRACT_EXEMPTIONS`.
+Verification: not recorded in commit history. Adds `tests/unit/money.test.ts` (91 lines) and
+`tests/unit/state-withholding-formula-deannualize.test.ts` (626 lines); commit message states
+no pass/fail counts.
+
+**Summary across `7717e6a`..`3d6302c` (18 commits, all now on `claude/upbeat-dirac-qqhuye`):**
+Step 3 (State Rule Resolver) went from "implemented, uncommitted" to committed, and Step 4
+(State Tax Calculation) progressed from nothing to an 11-of-12-operation withholding-formula
+interpreter with its full supporting reader/context layer. No commit in this range states a
+suite-wide pass/fail total in its message; the last such total recorded anywhere in this file
+(938 full-suite tests passed, 1 skipped, as of `7717e6a`'s own predecessor work) is now stale
+and should not be treated as current — see the caveat added to §12.
+
 ---
 
 ## 8. Active Blockers
@@ -396,7 +777,7 @@ Step 2's unrelated `CAPABILITY_PROGRAM` grouping.
 requested capability needs; this was the one remaining undesigned piece of the Step 3 pipeline.
 **Affected:** Unblocks Step 3.5+ (candidate retrieval will consume `requiredRuleKeys()`). Does
 not change Step 3.3's Coverage Gate, which remains independent.
-**Status:** Implemented, uncommitted (Step 3.4, on top of `95f3456`).
+**Status:** Implemented and committed — `7717e6a` (2026-09-20), bundled with Steps 3.3, 3.5–3.7.
 
 ### Step 3.5 sequencing — `retrieveCandidates`, positions 3-4 intentionally skipped
 **What changed:** The project owner explicitly approved `retrieveCandidates` (pipeline
@@ -406,7 +787,7 @@ position 7) as Step 3.5, rather than backfilling the earlier-skipped pipeline po
 next than the two skipped positions, which remain unimplemented and unassigned.
 **Affected:** Step 3.5 only. Positions 3-4 remain open for a future explicit decision; nothing
 about their contract was invented or assumed.
-**Status:** Implemented, uncommitted (Step 3.5, on top of `95f3456`).
+**Status:** Implemented and committed — `7717e6a` (2026-09-20), bundled with Steps 3.3, 3.4, 3.6, 3.7.
 
 ### Step 3.5 Provenance Preservation Fix — Option 1 selected
 **What changed:** A Step 3.7 (`assembleStateRuleSet`) implementation attempt found that Step
@@ -424,7 +805,7 @@ Phase 2 `resolveApplicableRules`/`ResolvableRule` primitive (also used by the fe
 **Affected:** `candidateRetrieval.ts` (new `StateResolvableRule` type, enriched query/mapping)
 and `resolveCandidates.ts` (type updated to carry the enrichment through; two documented type
 casts, no algorithm change). Step 3.7 remains unimplemented.
-**Status:** Implemented, uncommitted (on top of `95f3456`).
+**Status:** Implemented and committed — `7717e6a` (2026-09-20), bundled with Steps 3.3–3.7.
 
 **Note on authority:** Both amendments and Steps 3.1–3.2 were specified by the project owner
 pasting exact contract text directly into the session, not via a committed specification file.
@@ -465,12 +846,33 @@ to a later phase once the hosting runtime is confirmed (spec §62).
 
 ## 11. Git / Branch / Checkpoint History
 
-Current branch: `claude/upbeat-dirac-qqhuye`. Key checkpoints only (not every commit):
+Current branch: `claude/upbeat-dirac-qqhuye`. HEAD is `3d6302c`; working tree clean.
+
+Table reconciled 2026-09-24 against `git log --oneline 95f3456..3d6302c`, which lists 18
+commits — this table now includes every one of them, not just the range's endpoints, per that
+reconciliation (see the disclosure note in §5).
 
 | SHA | Message | Purpose | Status |
 |---|---|---|---|
-| (uncommitted) | Step 3.3 + 3.4 + 3.5 (provenance-corrected) + 3.6 + 3.7 | `coverageGate.ts`, `capabilityRuleKeys.ts`, `rules/candidateRetrieval.ts`, `rules/resolveCandidates.ts`, `rules/assembleStateRuleSet.ts` + tests | Implemented, awaiting commit approval |
-| `95f3456` | docs: add persistent Claude project memory system | Project memory system checkpoint | Latest committed checkpoint |
+| `3d6302c` | feat: implement deannualize formula operation | Step 4, Task 4O-6R38–45: `DEANNUALIZE` + `lib/core/money.ts` `divideHighPrecision()` | Committed — current HEAD |
+| `3d7a9a5` | feat: implement annualize formula operation | Step 4, Task 4O-6R32/33: `ANNUALIZE` | Committed |
+| `c4559d1` | feat: implement percentage-of formula operation | Step 4, Task 4O-6R24–26: `APPLY_PERCENTAGE_OF` | Committed |
+| `ff808ac` | feat: implement state ADD_AMOUNT formula operation | Step 4, Task 4O-6R20–23: `ADD_AMOUNT` + `resolveWorkJurisdictionElections()` | Committed |
+| `04ba18c` | feat: implement state allowance subtraction | Step 4, Task 4O-6R14–17: `SUBTRACT_ALLOWANCES` | Committed |
+| `f248350` | feat: add state allowance count context | Step 4, Task 4O-6R14–16: `StateInput.allowanceCounts` / context plumbing | Committed |
+| `7dc01d0` | feat: implement flat rate formula operation | Step 4, Task 4O-6R9–12: `APPLY_FLAT_RATE` | Committed |
+| `37d5506` | feat: implement scalar amount formula infrastructure | Step 4, Task 4O-6R4–6: `SCALAR_AMOUNT` schema + `SUBTRACT_AMOUNT` | Committed |
+| `f8b2814` | feat: implement state personal exemption formula step | Step 4, Task 4O-4/5: `SUBTRACT_EXEMPTIONS` (personal path only) | Committed |
+| `d19e1b3` | feat: add state withholding formula core interpreter | Step 4, Task 4O-2/3A: interpreter core — `SUBTRACT_STANDARD_DEDUCTION`, `FLOOR_AT_ZERO`, `APPLY_BRACKETS` | Committed |
+| `9fe279f` | feat: add state withholding formula reader | Step 4, Task 4O-1: `readWithholdingFormula()` | Committed |
+| `f175747` | feat: add state withholding table row selector | Step 4, Task 4N-R: `selectStateWithholdingTableRow()` | Committed |
+| `6e53d68` | feat: add state withholding filing status map reader | Step 4, Task 4L: `readWithholdingFilingStatusMap()` | Committed |
+| `939e37c` | feat: add state withholding pay periods reader | Step 4, Task 4K: `resolveStatePayPeriodsPerYear()` | Committed |
+| `31b4b4d` | feat: add state withholding method reader | Step 4, Task 4J: `readWithholdingMethod()` | Committed |
+| `56b2d0f` | feat: build state calculation context | Step 4, Task 4I: `buildStateCalculationContext()` | Committed |
+| `ff0616f` | feat: wire state calculation options and deduction bridge | Step 4, Task 4G/4H: `state-bridge.ts` (`StateOptions`, `toStateDeductions()`) | Committed |
+| `7717e6a` | feat: complete state tax foundation through task 4c | Step 3.3–3.7 (State Rule Resolver, end to end) **+** Step 4, Tasks 1–4C (rule-detail readers, wage-base primitive, Task 4B Option A wage-bucket derivation) | Committed |
+| `95f3456` | docs: add persistent Claude project memory system | Project memory system checkpoint | Committed |
 | `8f7952a` | feat(state): implement explicit capability request source | Step 3.2 + Amendment 3 checkpoint | Committed |
 | `fd42c98` | feat: implement phase 5 step 3.1 resolution context | Step 3.1 checkpoint | Committed |
 | `11b4ae0` | fix: isolate state coverage integration fixtures | Step 2 test-isolation fix | Committed |
@@ -495,11 +897,17 @@ npm run build             # next build (Turbopack)
 npx prisma validate       # schema validation
 ```
 
-Latest verified totals (as of the uncommitted Step 3.3 + 3.4 + 3.5 (provenance-corrected) +
-3.6 + 3.7 work, on top of `95f3456`, run WITH PostgreSQL live via `npm run test:db`/full suite
-together): 938 tests passed, 1 skipped, 0 failed; typecheck/lint/format/build/Prisma validate
-all clean. Do not append further historical test-run numbers here — replace this line when a
-newer result supersedes it.
+Latest verified totals (as of the Step 3.3 + 3.4 + 3.5 (provenance-corrected) + 3.6 + 3.7 work,
+committed in `7717e6a`, run WITH PostgreSQL live via `npm run test:db`/full suite together):
+938 tests passed, 1 skipped, 0 failed; typecheck/lint/format/build/Prisma validate all clean.
+Do not append further historical test-run numbers here — replace this line when a newer result
+supersedes it.
+
+**Stale as of 2026-09-24:** this 938/1/0 total predates `7717e6a`'s own Step 4 Task 1–4C
+additions and all 17 commits after it through `3d6302c` (see §7, §11) — none of which record a
+suite-wide pass/fail count in their commit history. The true current total is therefore
+unknown and should not be assumed to still be 938/1/0; it is left un-replaced here (rather than
+guessed) pending an actual `npm test`/`npm run test:db` run against current HEAD.
 
 Known flake (pre-existing, not caused by Step 3.5): `tests/integration/state-coverage-matrix
 .test.ts` has one test with an intentionally unscoped jurisdiction count assertion that can
@@ -545,27 +953,40 @@ Infra constraints:    None documented yet.
 
 ## 15. Current Next Action
 
-**Steps 3.3, 3.4, 3.5 (provenance-corrected), 3.6 and 3.7 are all COMPLETE but
-UNCOMMITTED — Step 3 (State Rule Resolver) is now implemented end to end.**
+**Superseded 2026-09-24 — see the disclosure note in §5.** Everything below this line
+described a state ~18 commits stale (Steps 3.3–3.7 as "COMPLETE but UNCOMMITTED"). All of
+Steps 3.3–3.7 were in fact committed in `7717e6a` on 2026-09-20, and 17 further commits
+(through current HEAD `3d6302c`, 2026-09-22) implemented most of Step 4 (State Tax
+Calculation) on top of that — see §6 for the current phase/step summary and §7 for the
+commit-by-commit detail. The `StateRuleKey -> RuleCategory` mapping decision mentioned below
+remains genuinely open (not resolved by any commit in `7717e6a..3d6302c`) — it is still a
+correct PENDING DECISION, not stale.
+
+As of `3d6302c`, the two disclosed, non-blocking gaps still standing are: (1) the
+`ResolvedStateRuleSet.missing` mapping gap described just below, and (2) `ROUND` and the
+`SUBTRACT_EXEMPTIONS` dependent-exemption path (`PIT_DEPENDENT_EXEMPTION`), both still
+unresolved in the withholding-formula interpreter (§7, `3d6302c` entry). No caller wires
+`runStateWithholdingFormula()` end to end yet. This file does not know what the project owner
+has asked for since `3d6302c` — the next actual next-action determination is for whichever
+session next receives an explicit instruction, verified against current `git log`/`git status`
+per §18, not inferred from this now-corrected paragraph.
+
+The original (now-historical) next-action text, preserved for its still-accurate content on
+the `ResolvedStateRuleSet.missing` gap and the "do not invent" guidance:
 
 `lib/tax/state/coverageGate.ts`, `lib/tax/state/capabilityRuleKeys.ts`,
 `lib/tax/state/rules/candidateRetrieval.ts`, `lib/tax/state/rules/resolveCandidates.ts`,
-`lib/tax/state/rules/assembleStateRuleSet.ts`, and their tests exist in the working tree on
-top of commit `95f3456`. The Step 3.5 provenance-preservation fix (§9) made Step 3.7 possible
-without any database access; Step 3.7 preserves that provenance verbatim into the final
-`ResolvedStateRuleSet` (see the Step 3.7 entry in §7). One disclosed, non-blocking gap remains:
-`ResolvedStateRuleSet.missing` is left empty pending an explicit `StateRuleKey -> RuleCategory`
-mapping decision the owner has not yet made (see the Step 3.7 entry in §7).
-
-Next action: either (a) the owner reviews and asks for a commit + push checkpoint covering
-Steps 3.3-3.7 together (same pattern as the Step 3.2 + Amendment 3 checkpoint), or (b) the
-owner requests a next step — e.g. wiring `assembleStateRuleSet()` into an actual caller/Stage B,
-or the `StateRuleKey -> RuleCategory` mapping decision noted above — with its own concrete
-contract supplied inline, following the pattern established for every prior sub-step.
+`lib/tax/state/rules/assembleStateRuleSet.ts`, and their tests are committed (`7717e6a`). The
+Step 3.5 provenance-preservation fix (§9) made Step 3.7 possible without any database access;
+Step 3.7 preserves that provenance verbatim into the final `ResolvedStateRuleSet` (see the
+Step 3.7 entry in §7). One disclosed, non-blocking gap remains: `ResolvedStateRuleSet.missing`
+is left empty pending an explicit `StateRuleKey -> RuleCategory` mapping decision the owner has
+not yet made (see the Step 3.7 entry in §7).
 
 **DO NOT:**
-- Start any further step (Step 3.8+, or wiring this resolver into a caller) without an
-  explicit instruction and a concrete contract
+- Start Step 5+ or further Step 4 work (e.g. wiring `runStateWithholdingFormula()` into a
+  caller, the `ROUND` operation, or the dependent-exemption path) without an explicit
+  instruction and a concrete contract
 - Implement pipeline positions 3-4 (`fixEffectiveInstant`, `identifyJurisdictions`) unless
   explicitly requested
 - Invent a `StateRuleKey -> RuleCategory` mapping to populate `ResolvedStateRuleSet.missing`
