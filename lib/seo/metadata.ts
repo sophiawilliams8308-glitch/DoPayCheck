@@ -47,12 +47,22 @@ export interface PageMetadataInput {
   readonly path: string;
   /** Set false for pages that must not be indexed (spec §37). */
   readonly indexable?: boolean;
+  /**
+   * Site-relative Open Graph / Twitter image path, e.g. `/og/california.png`.
+   *
+   * SEO-04 (SEO-03 contract §L): strictly additive — omitting it leaves every existing caller
+   * (`app/page.tsx`, `app/layout.tsx`) byte-for-byte unchanged. Added here rather than in a
+   * second metadata emitter because `buildMetadata()` remains the sole one (contract §19).
+   */
+  readonly ogImagePath?: string;
 }
 
 /** Builds per-page metadata with a canonical URL and social tags. */
 export function buildMetadata(input: PageMetadataInput): Metadata {
   const url = canonicalUrl(input.path);
   const indexable = input.indexable ?? true;
+  const ogImageUrl =
+    input.ogImagePath === undefined ? undefined : `${siteUrl()}${input.ogImagePath}`;
 
   return {
     title: input.title,
@@ -65,11 +75,13 @@ export function buildMetadata(input: PageMetadataInput): Metadata {
       description: input.description,
       url,
       locale: SITE.locale,
+      ...(ogImageUrl === undefined ? {} : { images: [{ url: ogImageUrl }] }),
     },
     twitter: {
       card: 'summary_large_image',
       title: input.title,
       description: input.description,
+      ...(ogImageUrl === undefined ? {} : { images: [ogImageUrl] }),
     },
     robots: indexable
       ? { index: true, follow: true }

@@ -219,6 +219,11 @@ model Jurisdiction {
   reciprocityFrom    ReciprocityRule[] @relation("ReciprocityFrom")
   reciprocityTo      ReciprocityRule[] @relation("ReciprocityTo")
 
+  /// SEO-04 (SEO-03 contract §AE): additive back-relations only. This model's own semantics,
+  /// columns and indexes are unchanged — the SEO domain reads this table, never writes it.
+  seoPages                   SeoPage[]
+  taxDataReadinessApprovals  TaxDataReadinessApproval[]
+
   @@index([type])
   @@index([parentId])
   @@index([stateCode])
@@ -256,6 +261,9 @@ model TaxYear {
 
   taxRules TaxRule[]
   sources  Source[]
+
+  /// SEO-04 (SEO-03 contract §AE): additive back-relation only, same rule as `Jurisdiction`.
+  taxDataReadinessApprovals TaxDataReadinessApproval[]
 
   @@index([status])
   @@index([isDefault])
@@ -813,4 +821,342 @@ model CalculationSnapshot {
   @@index([status])
   @@index([createdAt])
   @@index([engineVersion])
+}
+
+// ===========================================================================
+// SEO-04 — SEO DATA MODEL (SEO-03 IMPLEMENTATION CONTRACT §D, §E, §AE)
+//
+// Six new models, four new enums. Nothing above this line is modified except the two
+// additive back-relation fields on `Jurisdiction` and `TaxYear` (contract §AE, §AF) — no
+// existing column, index, constraint or semantics changes.
+//
+// `TaxDataReadinessApproval` is owned by the TAX domain (contract §E, §W): it stores an
+// OPERATIONAL APPROVAL DECISION, never a tax fact. It carries no rate, bracket, threshold,
+// wage base, formula, verification truth or source record (§E.3). The SEO models below may
+// never import `TaxRule` or read `TaxRule.verificationStatus` — they consume readiness only
+// through the `coverage.isPublishable()` boundary (§F), implemented in `lib/tax/readiness/`.
+// ===========================================================================
+
+enum SeoPageTypeKey {
+  HOME
+  CALCULATOR
+  STATE
+  SALARY
+  GUIDE
+  HUB
+  UTILITY
+  // SALARY_STATE is deferred — not defined (SEO-01 §9, contract §T.2).
+}
+
+/// Independent from `RuleStatus`/`VerificationStatus`/`TaxYearStatus` — never reused across
+/// domains, even where a token (`DRAFT`) is shared (contract §I.2).
+enum SeoLifecycleState {
+  DRAFT
+  REVIEW
+  VERIFIED
+  PUBLISHED
+  NEEDS_UPDATE
+  ARCHIVED
+}
+
+/// Closed set. Adding a block type is a schema-registry change (`lib/seo/blocks/`), never a
+/// free-form or arbitrary-HTML block (contract §D.7, §AB).
+enum SeoBlockType {
+  HERO
+  INTRO
+  RICH_TEXT
+  KEY_FACTS
+  CALCULATOR_EMBED
+  CALCULATOR_CTA
+  TAX_EXPLANATION
+  STATE_TAX_SECTION
+  NO_STATE_TAX_SECTION
+  STATE_PROGRAM_SECTION
+  LOCAL_TAX_NOTICE
+  PAY_FREQUENCY_TABLE
+  SALARY_TABLE
+  SALARY_EXAMPLES
+  EXAMPLE
+  FAQ
+  RELATED_CALCULATORS
+  RELATED_STATES
+  RELATED_SALARIES
+  RELATED_GUIDES
+  SOURCES
+  CTA
+  DISCLAIMER
+}
+
+/// Every forced-`noindex` case carries one of these, surfaced in a future admin (contract §J).
+enum SeoIndexabilityReason {
+  OK
+  NOT_PUBLISHED
+  QUALITY_GATE_FAILED
+  TAX_READINESS_MISSING
+  TAX_READINESS_STALE
+  TAX_CAPABILITY_INSUFFICIENT
+  CONTENT_STALE
+  DUPLICATE_IDENTITY
+  MANUAL_NOINDEX
+  ARCHIVED
+}
+
+/// Global editable SEO content defaults — SINGLETON (contract §D.3).
+///
+/// `id` is a fixed key (`"singleton"`); a CHECK constraint added outside this file's
+/// declarative reach (Prisma cannot express one — see the migration's own note, matching the
+/// established Phase 2 convention) makes a second row impossible even via raw SQL.
+///
+/// Infrastructure (`NEXT_PUBLIC_SITE_URL`, hostname, environment, `trailingSlash`) is
+/// deliberately NOT modeled here — it stays in `lib/config/env.ts` (contract §D.3, "§13").
+/// The existing `SITE` constant (`lib/seo/metadata.ts`) remains the fallback layer beneath
+/// this table: `SeoSettings value ?? SITE default`.
+model SeoSettings {
+  id String @id @default("singleton")
+
+  siteName           String
+  tagline            String
+  defaultDescription String
+
+  defaultOgImagePath String?
+  defaultTwitterCard String?
+
+  organizationName     String?
+  organizationLogoPath String?
+  organizationSameAs   String[]
+
+  defaultRobotsIndex  Boolean @default(true)
+  defaultRobotsFollow Boolean @default(true)
+
+  /// Default token values (contract §G.3's fixed vocabulary only), Zod-validated on write.
+  titleTokenDefaults Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// Per-page-type editable defaults (contract §D.4). One row per `SeoPageTypeKey` member,
+/// seeded at migration time — the enum gives type safety, this table gives no-code editing.
+model SeoPageTypeConfig {
+  id String @id @default(cuid())
+
+  pageType SeoPageTypeKey @unique
+
+  /// NULL ⇒ inherit from `SeoSettings` (contract §H.2).
+  titleTemplate       String?
+  descriptionTemplate String?
+  h1Template          String?
+
+  /// Per-type indexability posture (e.g. `UTILITY` = false).
+  defaultIndexable Boolean @default(true)
+
+  /// Ordered block types with required flags, Zod-validated on write.
+  defaultBlockStructure Json?
+
+  /// Constrained to the contract §O structured-data allowlist at the application layer.
+  defaultStructuredDataTypes String[]
+
+  defaultTemplateId String?
+  defaultTemplate   SeoTemplate? @relation(fields: [defaultTemplateId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// Reusable metadata pattern + default block structure for one page type (contract §D.5).
+/// Several templates may serve one page type (e.g. an income-tax vs. no-income-tax state
+/// template); `isDefaultForType` picks the one used when a page sets no explicit template.
+model SeoTemplate {
+  id  String @id @default(cuid())
+  key String @unique
+
+  name        String
+  description String
+
+  pageType SeoPageTypeKey
+
+  /// NULL ⇒ inherit from `SeoPageTypeConfig` (contract §H.2).
+  titleTemplate       String?
+  descriptionTemplate String?
+  h1Template          String?
+
+  /// Counts and selection rules for internal linking (contract §Q), Zod-validated on write.
+  internalLinkRules Json?
+
+  /// Partial-unique "one default per pageType" is enforced outside Prisma's declarative
+  /// reach — see the migration's data-integrity section, mirroring `TaxYear_single_current`.
+  isDefaultForType Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  pages            SeoPage[]
+  pageTypeDefaults SeoPageTypeConfig[]
+  blocks           SeoBlock[]
+
+  @@index([pageType])
+  @@index([isDefaultForType])
+}
+
+/// One addressable page (contract §D.6).
+///
+/// `path` is the sole duplicate-identity guard — global unique. The four identity fields
+/// below (`jurisdictionId`, `salaryAmount`, `calculatorKey`, `guideSlug`) are each required
+/// only for their own `pageType`; the per-type partial-unique constraints that enforce
+/// "required when" live in the migration's data-integrity section (Prisma cannot express a
+/// conditional NOT NULL or a partial unique declaratively).
+model SeoPage {
+  id String @id @default(cuid())
+
+  pageType SeoPageTypeKey
+
+  /// Canonical path, trailing-slash convention. Global unique — the duplicate-URL guard.
+  path String @unique
+
+  templateId String?
+  template   SeoTemplate? @relation(fields: [templateId], references: [id], onDelete: Restrict)
+
+  /// Required when `pageType = STATE`. Sole jurisdiction identity (contract §C, §H) — no
+  /// `SeoJurisdiction` table exists or may be added.
+  jurisdictionId String?
+  jurisdiction   Jurisdiction? @relation(fields: [jurisdictionId], references: [id], onDelete: Restrict)
+
+  /// Required when `pageType = SALARY`. Integer only — one representation (contract §T).
+  salaryAmount Int?
+
+  /// Required when `pageType = CALCULATOR`. Stable identity.
+  calculatorKey String?
+
+  /// Required when `pageType = GUIDE`.
+  guideSlug String?
+
+  lifecycleState SeoLifecycleState @default(DRAFT)
+
+  /// Editor intent only — NEVER the final indexability answer (contract §J.1).
+  manualIndexable Boolean @default(false)
+
+  /// NULL = inherit, `''` = explicit suppress, any other value = override (contract §H.2).
+  /// Whitespace-only is normalized to `''` before it reaches this column.
+  titleOverride       String?
+  descriptionOverride String?
+  h1Override          String?
+  ogImagePathOverride String?
+
+  /// Exception path only. A non-null value requires `canonicalOverrideReason` — enforced at
+  /// the application layer and re-checked by the quality gates (contract §K).
+  canonicalOverride       String?
+  canonicalOverrideReason String?
+
+  /// Drives staleness detection against the current tax year (contract §U). Never part of a
+  /// public URL.
+  contentYear Int?
+
+  /// Existing Phase 5 `StateCapability` vocabulary only — no second vocabulary (contract §S.2).
+  requiredCapabilities String[]
+
+  /// Precomputed internal-link targets (contract §Q.2). Never resolved by an unbounded
+  /// runtime query.
+  relatedLinksCache Json?
+
+  lastReviewedAt DateTime?
+  publishedAt    DateTime?
+  archivedAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  blocks SeoBlock[]
+
+  @@index([pageType, lifecycleState])
+  @@index([lifecycleState])
+  @@index([jurisdictionId])
+  @@index([salaryAmount])
+  @@index([contentYear])
+}
+
+/// Ordered typed content block, on a page OR a template — never both (contract §D.7).
+///
+/// TYPED JSON, NOT EAV (§43): one row per BLOCK, with a discriminated `payload` validated by
+/// a Zod schema selected by `blockType` — the same pattern already proven by `TaxRule.payload`
+/// plus the state detail-schema registry. Adding a block type adds a schema, never a column
+/// and never a migration.
+model SeoBlock {
+  id String @id @default(cuid())
+
+  /// Exactly one of `pageId`/`templateId` is ever set — enforced by a CHECK constraint the
+  /// migration adds beyond Prisma's declarative reach (`SeoBlock_exactly_one_parent`).
+  pageId String?
+  page   SeoPage? @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  templateId String?
+  template   SeoTemplate? @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  blockType SeoBlockType
+  position  Int
+
+  /// Typed per `blockType`, Zod-validated on write (`lib/seo/blocks/`) — never EAV, never an
+  /// arbitrary-HTML block.
+  payload Json
+
+  /// `DISCLAIMER` and (where the jurisdiction has local taxes) `LOCAL_TAX_NOTICE` are
+  /// `isRemovable = false` — correctness controls, not copy (contract §S.3).
+  isRequired  Boolean @default(false)
+  isRemovable Boolean @default(true)
+
+  /// e.g. render only if the jurisdiction has an income tax. Evaluated by the resolver, never
+  /// an executable expression.
+  condition Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([pageId, position])
+  @@unique([templateId, position])
+  @@index([blockType])
+}
+
+/// The persisted TAX-DOMAIN operational approval decision (contract §E.1) — never a stored
+/// tax capability FACT (§E.3). SEO reads only the `coverage.isPublishable()` result derived
+/// from the CURRENT (non-revoked, non-expired) row for a `(jurisdictionId, taxYearId)` pair;
+/// it never reads this table directly.
+///
+/// Rows are EFFECTIVELY IMMUTABLE — only the three revocation fields are ever written after
+/// creation. A new approval is always a new row, so the audit trail (what was approved, by
+/// whom, against what evidence, and when withdrawn) is never lost. Deletion is never
+/// permitted, enforced by the migration's data-integrity section (mirroring `AuditLog`'s own
+/// append-only trigger).
+model TaxDataReadinessApproval {
+  id String @id @default(cuid())
+
+  jurisdictionId String
+  jurisdiction   Jurisdiction @relation(fields: [jurisdictionId], references: [id], onDelete: Restrict)
+
+  taxYearId Int
+  taxYear   TaxYear @relation(fields: [taxYearId], references: [id], onDelete: Restrict)
+
+  /// Approved capability set, from the existing Phase 5 `StateCapability` vocabulary — no
+  /// second vocabulary.
+  capabilities String[]
+
+  /// Opaque to SEO — never parsed or compared outside the tax domain. Deterministic and
+  /// order-independent over the evidence set; changes when any constituent (rule version,
+  /// verification state, relevant dataset generation) changes (contract §E.2).
+  evidenceFingerprint String
+
+  approvedByUserId String
+  approvedAt       DateTime @default(now())
+
+  /// Required — why approval was granted. Never blank.
+  reason String
+
+  expiresAt DateTime?
+
+  revokedAt        DateTime?
+  revokedByUserId  String?
+  revocationReason String?
+
+  createdAt DateTime @default(now())
+
+  @@index([jurisdictionId, taxYearId, approvedAt(sort: Desc)])
+  @@index([revokedAt])
 }
