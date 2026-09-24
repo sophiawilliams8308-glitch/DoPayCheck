@@ -50,7 +50,7 @@ const config = [
   {
     // Command-line scripts report progress on stdout; the structured logger targets the
     // running application, not one-shot CLI tooling.
-    files: ['prisma/seed.ts'],
+    files: ['prisma/seed.ts', 'prisma/seedSeoCalculators.ts'],
     rules: {
       'no-console': 'off',
     },

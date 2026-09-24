@@ -3,6 +3,7 @@ import { getPrisma } from '@/lib/db/client';
 import { coverage } from '@/lib/tax/readiness';
 
 import { SITE } from './metadata';
+import { isCalculatorConfigured, isCalculationAvailable } from './calculators/validation';
 import { evaluateQualityGates, type QualityGateBlockInput } from './gates';
 import { resolveCanonicalPath, resolveSeoMetadata } from './resolver';
 
@@ -24,12 +25,16 @@ import { resolveCanonicalPath, resolveSeoMetadata } from './resolver';
  * never once per page.
  * ===========================================================================
  *
- * DISCLOSED SCOPE LIMIT: `calculatorConfigured`/`calculationAvailable` (gates 8/9) are `true`
- * unconditionally. SEO-04 builds no calculator-key registry (Phase 9/SEO-05+ territory), and
- * no `CALCULATOR` page can exist yet — nothing in this repository creates one. The "state/
- * programmatic context" inheritance level (contract §H.1) is also not synthesized here — no
- * per-state default content generator exists yet either, so it resolves as absent (inherits
- * from the template/page-type/global levels), exactly like every other unbuilt input.
+ * GATES 8/9 (SEO-05 update): `calculatorConfigured`/`calculationAvailable` are now real,
+ * registry-derived checks for `CALCULATOR` pages (`lib/seo/calculators/validation.ts`), not the
+ * SEO-04 unconditional `true` placeholder. For every OTHER page type these two gates stay
+ * `true` — they describe a calculator-specific prerequisite that does not apply to a STATE,
+ * SALARY, GUIDE, HUB, HOME or UTILITY page, so a fixed `true` remains correct for them.
+ *
+ * DISCLOSED SCOPE LIMIT (unchanged from SEO-04): the "state/programmatic context" inheritance
+ * level (contract §H.1) is not synthesized here — no per-state default content generator
+ * exists yet, so it resolves as absent (inherits from the template/page-type/global levels),
+ * exactly like every other unbuilt input.
  */
 
 export interface EligiblePage {
@@ -44,12 +49,15 @@ interface RelatedLinksCacheShape {
   readonly targets?: readonly { readonly path?: unknown }[];
 }
 
-function targetsOf(relatedLinksCache: unknown): readonly { readonly path?: unknown }[] {
+/** Exported for reuse by `lib/seo/calculators/pageData.ts` — a single-page render needs the
+ * same inbound-link accounting this batch already computes, never a second implementation of
+ * it (contract §11, §14). */
+export function targetsOf(relatedLinksCache: unknown): readonly { readonly path?: unknown }[] {
   const cache = relatedLinksCache as RelatedLinksCacheShape | null;
   return cache !== null && Array.isArray(cache.targets) ? cache.targets : [];
 }
 
-function countInboundLinks(
+export function countInboundLinks(
   pages: readonly { readonly path: string; readonly relatedLinksCache: unknown }[],
   targetPath: string,
 ): number {
@@ -60,7 +68,7 @@ function countInboundLinks(
   ).length;
 }
 
-function hasInboundFromHubOrCalculator(
+export function hasInboundFromHubOrCalculator(
   pages: readonly {
     readonly path: string;
     readonly pageType: string;
@@ -247,8 +255,10 @@ export async function listEligibleSeoPages(): Promise<readonly EligiblePage[]> {
       isProgrammaticPage: page.pageType !== 'HOME' && page.pageType !== 'UTILITY',
       requiresTaxReadiness,
       readinessPublishable,
-      calculatorConfigured: true,
-      calculationAvailable: true,
+      calculatorConfigured:
+        page.pageType !== 'CALCULATOR' || isCalculatorConfigured(page.calculatorKey),
+      calculationAvailable:
+        page.pageType !== 'CALCULATOR' || isCalculationAvailable(page.calculatorKey),
       taxYearDataAvailable: page.contentYear === null || taxYearIdByYear.has(page.contentYear),
       inboundLinkCount: countInboundLinks(pages, page.path),
       hasInboundLinkFromHubOrCalculator: hasInboundFromHubOrCalculator(pages, page.path),

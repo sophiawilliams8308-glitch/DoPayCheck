@@ -1,6 +1,7 @@
 import type { NextConfig } from 'next';
 
 import { securityHeaders } from './lib/security/headers';
+import { CALCULATOR_REDIRECTS } from './lib/seo/calculators/redirects';
 
 /**
  * DoPayCheck — Next.js configuration.
@@ -32,6 +33,16 @@ const nextConfig: NextConfig = {
 
   images: {
     formats: ['image/avif', 'image/webp'],
+  },
+
+  // Calculator URL consolidation (SEO-05 contract §22) — the ONE redirect table, sourced from
+  // `lib/seo/calculators/redirects.ts`. Permanent (301), server-side, never a client redirect.
+  async redirects() {
+    return CALCULATOR_REDIRECTS.map((redirect) => ({
+      source: redirect.source,
+      destination: redirect.destination,
+      permanent: redirect.permanent,
+    }));
   },
 
   async headers() {

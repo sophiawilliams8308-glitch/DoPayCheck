@@ -23,6 +23,7 @@
     "db:migrate:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
+    "db:seed:seo-calculators": "tsx prisma/seedSeoCalculators.ts",
     "db:reset": "prisma migrate reset",
     "test:db": "vitest run tests/integration"
   },
