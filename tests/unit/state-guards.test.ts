@@ -925,3 +925,87 @@ describe('DM-03 Slice 18 scope — withholding table reader, read-only', () => {
     expect(selectorSource).not.toMatch(/export function readWithholdingTable\b/);
   });
 });
+
+describe('DM-03 Slice 19 scope — rounding: ROUND stays excluded, appliedAt stays inert', () => {
+  it('the formula interpreter still declares no ROUND case — Task 4O-6R31 remains in force', () => {
+    // Task 4O-6R31 (already committed, predating this slice) architecturally
+    // excludes ROUND from this interpreter entirely — "never to a
+    // formula-step operation." Slice 19 investigated whether repository
+    // evidence now supports implementing it and found none (appliedAt's
+    // execution meaning is unestablished anywhere in the repository — see
+    // the next test) — so that exclusion stands, and this guard protects it
+    // from silent reversal.
+    const source = code(
+      readFileSync(join(STATE, 'rules/withholdingFormulaInterpreter.ts'), 'utf8'),
+    );
+    expect(source).not.toMatch(/case 'ROUND'\s*:/);
+    expect(source).not.toMatch(/WITHHOLDING_ROUNDING_POLICY/);
+    expect(source).not.toMatch(/readWithholdingRoundingPolicy/);
+  });
+
+  it('appliedAt is never read to branch execution anywhere in state code', () => {
+    // Confirmed by DM-03 Slice 19 discovery: `.appliedAt` is read in exactly
+    // one place in the entire state namespace (withholdingRoundingPolicy.ts's
+    // own pass-through field mapping) and nowhere selects a scale, a
+    // rounding mode, or any other behavior — mirroring federal's own
+    // `federal-rounding.ts`, where `appliedAt` likewise drives only a
+    // disclosure string, never a branch. Inventing such a branch would be
+    // exactly the guessed semantic DM-03 Slice 19 was told not to add.
+    const offenders = stateFiles()
+      .filter((file) => !file.rel.endsWith('withholdingRoundingPolicy.ts'))
+      .filter((file) => /\.appliedAt\b/.test(code(file.text)))
+      .map((file) => file.rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it('introduces no second rounding primitive — round() in lib/core/money.ts remains the only one', () => {
+    // Non-negotiable per DM-03 Slice 19: no competing Money rounding system.
+    // State code may consume the existing `round()`/`RoundingMode` from
+    // `lib/core/money.ts`, never redefine decimal-place rounding itself.
+    // Matches an actual primitive definition (`function round(`,
+    // `function roundMoney(`, ...), not any identifier that merely contains
+    // "round" as a substring (e.g. `readWithholdingRoundingPolicy`).
+    const offenders = stateFiles()
+      .filter((file) =>
+        /function\s+(round|roundMoney|roundTo|quantize|roundTax|roundIntermediate)\s*\(/.test(
+          code(file.text),
+        ),
+      )
+      .map((file) => file.rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it('readWithholdingRoundingPolicy() still delegates entirely to readDetail() and applies no policy', () => {
+    const source = code(readFileSync(join(STATE, 'rules/withholdingRoundingPolicy.ts'), 'utf8'));
+    expect(source).toMatch(/readDetail\(/);
+    expect(source).not.toMatch(/\bround\(/);
+  });
+
+  it('is not wired into calculateStateTaxes() or index.ts', () => {
+    // Slice 19's explicit boundary: no new calculation orchestration.
+    // `StateMethodology.roundingPolicyId` is a pre-existing field
+    // (predating this slice, already hardcoded to `null` in index.ts) —
+    // this guard checks only that Slice 19 did not add a call to the
+    // reader itself, not that the pre-existing field name is absent.
+    const source = code(readFileSync(join(STATE, 'index.ts'), 'utf8'));
+    expect(source).not.toMatch(/readWithholdingRoundingPolicy/);
+  });
+
+  it('does not modify Slice 17 methodology dispatch or Slice 18 table reader semantics', () => {
+    const methodologySource = code(
+      readFileSync(join(STATE, 'rules/withholdingMethodology.ts'), 'utf8'),
+    );
+    expect(methodologySource).toMatch(/export function resolveWithholdingMethodology/);
+    expect(methodologySource).not.toMatch(
+      /WITHHOLDING_ROUNDING_POLICY|readWithholdingRoundingPolicy/,
+    );
+
+    const tableReaderSource = code(
+      readFileSync(join(STATE, 'rules/withholdingTableReader.ts'), 'utf8'),
+    );
+    expect(tableReaderSource).toMatch(/export function readWithholdingTable\b/);
+    expect(tableReaderSource).not.toMatch(
+      /WITHHOLDING_ROUNDING_POLICY|readWithholdingRoundingPolicy/,
+    );
+  });
+});
