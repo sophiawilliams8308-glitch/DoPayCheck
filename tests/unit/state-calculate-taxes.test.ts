@@ -70,6 +70,47 @@ function profileSet(profiles: readonly unknown[]) {
   return { shape: 'TAXABILITY_PROFILE_SET', profiles };
 }
 
+/** A `WAGE_BASE`-shaped entry recording NOT_APPLICABLE — reused for the
+ * SUTA-employer aggregator tests below, which need `SUTA_WAGE_BASE`
+ * resolved (unlike `ruleSetFor()`, hardcoded to `TAXABILITY_PROFILE` only). */
+function wageBaseNotApplicableEntry(key: StateRuleKey): {
+  available: true;
+  rule: ResolvedStateRule;
+} {
+  return {
+    available: true,
+    rule: {
+      key,
+      reference: reference(key),
+      detail: {
+        shape: 'WAGE_BASE',
+        amount: null,
+        basis: 'ANNUAL',
+        applicability: 'NOT_APPLICABLE',
+      },
+      verificationStatus: 'VERIFIED',
+    },
+  };
+}
+
+function ruleSetWithSutaWageBase(taxabilityDetail: unknown): ResolvedStateRuleSet {
+  const entries: Partial<Record<StateRuleKey, StateRuleEntry>> = {
+    [KEY]: availableEntry(taxabilityDetail),
+    [StateRuleKey.SUTA_WAGE_BASE]: wageBaseNotApplicableEntry(StateRuleKey.SUTA_WAGE_BASE),
+  };
+  return freezeStateRuleSet({
+    taxYear: TAX_YEAR,
+    effectiveDate: EFFECTIVE,
+    jurisdictionCode: JURISDICTION_CODE,
+    engineVersion: 'test-engine',
+    resolvedAt: EFFECTIVE,
+    missing: [],
+    entries,
+    ruleReferences: [],
+    sourceIds: [],
+  });
+}
+
 function deduction(deductionTypeKey: string, amount: string): StateDeductionLine {
   return { deductionTypeKey, amount };
 }
@@ -265,10 +306,11 @@ describe('bucket-level resolver failure propagation', () => {
     expect(result.employee.sdiEmployee.problem?.reason).toBe('RULE_MISSING');
     expect(result.employee.pfmlEmployee.problem?.reason).toBe('RULE_MISSING');
     expect(result.employee.sutaEmployee.problem?.reason).toBe('RULE_MISSING');
-    // SUTA employer (Slice 12 disclosed gap): still genuinely not
-    // implemented -- the "not implemented" reason is correct here, since it
-    // is genuinely the calculation itself that is missing, not the bucket.
-    expect(result.employer?.sutaEmployer.problem?.reason).toBe('METHOD_NOT_IMPLEMENTED');
+    // SUTA employer (Slice 15): a real calculation is now attempted here
+    // too; this fixture supplies no SUTA_WAGE_BASE rule, so it fails
+    // RULE_MISSING before employer.sutaRate is even consulted -- wage-base
+    // resolution happens first, exactly as it does for the employee side.
+    expect(result.employer?.sutaEmployer.problem?.reason).toBe('RULE_MISSING');
   });
 });
 
@@ -369,5 +411,69 @@ describe('missingRules', () => {
     const ruleSet = ruleSetFor(profileSet([]));
     const result = calculateStateTaxes(context({ workRuleSet: ruleSet }), {});
     expect(result.missingRules).toEqual(ruleSet.missing);
+  });
+});
+
+describe('SUTA employer (Slice 15) — aggregator-level behavior', () => {
+  it('is calculated (COMPLETE) when employer.sutaRate is supplied and SUTA_WAGE_BASE is NOT_APPLICABLE', () => {
+    const result = calculateStateTaxes(
+      context({
+        workRuleSet: ruleSetWithSutaWageBase(profileSet([])),
+        employer: { sutaRate: '0.05' },
+      }),
+      {},
+    );
+    expect(result.employer).not.toBeNull();
+    if (result.employer === null) throw new Error('expected employer result');
+    expect(result.employer.sutaEmployer.status).toBe('COMPLETE');
+    expect(result.employer.sutaEmployer.amount).toBe('50');
+  });
+
+  it('remains unsupported when employer.sutaRate is absent, even with SUTA_WAGE_BASE resolved', () => {
+    const result = calculateStateTaxes(
+      context({ workRuleSet: ruleSetWithSutaWageBase(profileSet([])) }),
+      {},
+    );
+    expect(result.employer).not.toBeNull();
+    if (result.employer === null) throw new Error('expected employer result');
+    expect(result.employer.sutaEmployer.amount).toBeNull();
+    expect(result.employer.sutaEmployer.problem?.reason).toBe('SCENARIO_UNSUPPORTED');
+  });
+
+  it('never reads SUTA_EMPLOYER_RATE or SUTA_NEW_EMPLOYER_RATE — absent rate is unsupported, not defaulted', () => {
+    // The rule set supplies neither key at all; a fallback read would fail
+    // RULE_MISSING instead of SCENARIO_UNSUPPORTED, which this proves does
+    // not happen.
+    const result = calculateStateTaxes(
+      context({ workRuleSet: ruleSetWithSutaWageBase(profileSet([])) }),
+      {},
+    );
+    expect(result.employer?.sutaEmployer.problem?.reason).toBe('SCENARIO_UNSUPPORTED');
+  });
+
+  it('employee SUTA is unaffected by employer.sutaRate', () => {
+    const result = calculateStateTaxes(
+      context({
+        workRuleSet: ruleSetWithSutaWageBase(profileSet([])),
+        employer: { sutaRate: '0.05' },
+      }),
+      {},
+    );
+    // Employee SUTA still needs its own SUTA_EMPLOYEE_RATE, which this
+    // fixture does not supply — employer.sutaRate never substitutes for it.
+    expect(result.employee.sutaEmployee.amount).toBeNull();
+    expect(result.employee.sutaEmployee.problem?.reason).toBe('RULE_MISSING');
+  });
+
+  it('includeEmployerTaxes=false: employer SUTA is not calculated or emitted at all', () => {
+    const result = calculateStateTaxes(
+      context({
+        workRuleSet: ruleSetWithSutaWageBase(profileSet([])),
+        employer: { sutaRate: '0.05' },
+        includeEmployerTaxes: false,
+      }),
+      {},
+    );
+    expect(result.employer).toBeNull();
   });
 });

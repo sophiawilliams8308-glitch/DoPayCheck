@@ -60,16 +60,28 @@ export interface StateEmployerProfile {
    * 5%)." No second, conflicting convention exists anywhere in this
    * repository for this shape, so this field follows the same one.
    *
-   * Still open (DM-03 Slice 13, not resolved by this documentation): when
-   * this field is ABSENT, there is no established, deterministic way to
-   * choose between `STATE.SUTA.EMPLOYER_RATE` and
-   * `STATE.SUTA.NEW_EMPLOYER_RATE` — no employer-type/experience-rating
-   * discriminator exists anywhere in this codebase (confirmed: no
+   * SELECTION CONTRACT (DM-03 Slice 14): this field is the SOLE,
+   * REQUIRED input for a computable employer SUTA amount. When ABSENT,
+   * employer SUTA is UNAVAILABLE — never a silent fallback to
+   * `STATE.SUTA.EMPLOYER_RATE` or `STATE.SUTA.NEW_EMPLOYER_RATE`. This is
+   * not a gap awaiting more information; it is the deterministic
+   * consequence of two confirmed facts: (1) no employer-type/
+   * experience-rating discriminator exists anywhere in this codebase (no
    * `Employer` model in `prisma/schema.prisma`, no such field on
-   * `StateEmployerProfile`/`StateInput`). Inventing one is a broader
-   * product decision (how employer classification is captured at all),
-   * out of scope here — see `lib/tax/state/suta/calculateSuta.ts`'s own
-   * doc comment.
+   * `StateEmployerProfile`/`StateInput`, confirmed by two independent,
+   * exhaustive repository-wide searches — Slice 13 and Slice 14), and (2)
+   * `docs/SPECIFICATION.md`'s own SUTA field list ("Employee rate /
+   * Employer rate / New employer rate / Experience rate minimum /
+   * maximum") describes what a JURISDICTION'S RULE ROW should capture,
+   * never how one EMPLOYER's specific rate is selected from it. This
+   * mirrors the SAME "no established selector -> SCENARIO_UNSUPPORTED,
+   * not a guess" convention this engine already applies uniformly
+   * elsewhere (e.g. every SDI/PFML/SUTA wage-base APPLIES-without-YTD
+   * case) — not a new rule invented for this field. A future
+   * `calculateSutaEmployer()` should therefore report unavailable when
+   * `sutaRate` is absent, exactly mirroring `calculateSutaEmployee()`'s
+   * own failure-reporting shape — never select either jurisdiction rate
+   * key. Implementing that function remains a separate, later slice.
    */
   readonly sutaRate?: DecimalString;
   /** True when an approved private plan substitutes for a state programme. */

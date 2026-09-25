@@ -763,8 +763,74 @@ describe('DM-03 Slice 13 scope — SUTA employer-rate contract: unit resolved, s
     expect(offenders).toEqual([]);
   });
 
-  it('calculateSuta.ts still exports no employer-side calculation function', () => {
+  // The "exports no employer-side calculation function" assertion that
+  // stood here through Slice 13 is superseded by Slice 15, whose explicit
+  // job was to implement exactly that function — see the Slice 15 block
+  // below for the guard that replaces it.
+});
+
+describe('DM-03 Slice 14 scope — SUTA employer-rate selection contract now resolved (Option A)', () => {
+  it('StateEmployerProfile.sutaRate documents itself as the sole, required employer-rate input', () => {
+    // Locks in the Slice 14 resolution: sutaRate absent -> unavailable, never
+    // a silent fallback to either jurisdiction rate key.
+    const source = readFileSync(join(STATE, 'context.ts'), 'utf8');
+    expect(source).toMatch(/SOLE,/);
+    expect(source).toMatch(/REQUIRED input for a computable employer SUTA amount/);
+    expect(source).toMatch(/UNAVAILABLE/);
+  });
+
+  it('still does not invent an employer-type/experience-rating discriminator field', () => {
+    // Re-asserted after Slice 14: resolving the selection CONTRACT did not
+    // require, and did not add, a new field.
+    const offenders = stateFiles()
+      .filter((file) =>
+        /\bemployerType\b|\bisNewEmployer\b|\bexperienceRating\b|\bemployerClassification\b/.test(
+          code(file.text),
+        ),
+      )
+      .map((file) => file.rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it('still does not read SUTA_EMPLOYER_RATE or SUTA_NEW_EMPLOYER_RATE anywhere', () => {
+    // The resolved contract says a future calculateSutaEmployer() must never
+    // select either jurisdiction rate key — no code anywhere reads them yet.
+    const offenders = stateFiles()
+      .filter((file) => !file.rel.endsWith('ruleKeys.ts') && !file.rel.endsWith('detailSchemas.ts'))
+      .filter((file) => !file.rel.endsWith('read-detail.ts') && !file.rel.endsWith('wageBase.ts'))
+      .filter((file) => !file.rel.endsWith('capabilityRuleKeys.ts'))
+      .filter((file) =>
+        /StateRuleKey\.SUTA_EMPLOYER_RATE|StateRuleKey\.SUTA_NEW_EMPLOYER_RATE/.test(
+          code(file.text),
+        ),
+      )
+      .map((file) => file.rel);
+    expect(offenders).toEqual([]);
+  });
+});
+
+describe('DM-03 Slice 15 scope — SUTA employer calculation implemented, on the locked contract only', () => {
+  it('calculateSuta.ts now exports calculateSutaEmployer', () => {
     const suta = code(readFileSync(join(STATE, 'suta/calculateSuta.ts'), 'utf8'));
-    expect(suta).not.toMatch(/export function calculateSutaEmployer/);
+    expect(suta).toMatch(/export function calculateSutaEmployer/);
+  });
+
+  it('calculateSutaEmployer never reads SUTA_EMPLOYER_RATE or SUTA_NEW_EMPLOYER_RATE', () => {
+    const suta = code(readFileSync(join(STATE, 'suta/calculateSuta.ts'), 'utf8'));
+    expect(suta).not.toMatch(/StateRuleKey\.SUTA_EMPLOYER_RATE/);
+    expect(suta).not.toMatch(/StateRuleKey\.SUTA_NEW_EMPLOYER_RATE/);
+  });
+
+  it('still does not invent an employer-type/experience-rating discriminator field', () => {
+    // Re-asserted after Slice 15: implementing the function did not require,
+    // and did not add, a new field.
+    const offenders = stateFiles()
+      .filter((file) =>
+        /\bemployerType\b|\bisNewEmployer\b|\bexperienceRating\b|\bemployerClassification\b/.test(
+          code(file.text),
+        ),
+      )
+      .map((file) => file.rel);
+    expect(offenders).toEqual([]);
   });
 });

@@ -9,7 +9,7 @@ import type { TaxabilityResolutionContext } from './rules/resolveTaxability';
 import type { ResolvedStateRuleSet } from './rules/stateRuleSet';
 import { calculatePfmlEmployee, calculatePfmlEmployer } from './pfml/calculatePfml';
 import { calculateSdiEmployee, calculateSdiEmployer } from './sdi/calculateSdi';
-import { calculateSutaEmployee } from './suta/calculateSuta';
+import { calculateSutaEmployee, calculateSutaEmployer } from './suta/calculateSuta';
 import type {
   StateAmount,
   StateComponentResult,
@@ -23,10 +23,10 @@ import { deriveResolvedStateWageBuckets } from './wages/deriveResolvedStateWageB
 /**
  * State calculation engine — top-level entry point. DM-03 Slice 8; SDI wired
  * in at Slice 10; PFML wired in at Slice 11; SUTA employee side wired in at
- * Slice 12.
+ * Slice 12; SUTA employer side wired in at Slice 15.
  *
  * ===========================================================================
- * MOSTLY STILL A SHELL — SDI, PFML, AND SUTA'S EMPLOYEE SIDE ARE THE REAL
+ * MOSTLY STILL A SHELL — SDI, PFML, AND SUTA (BOTH SIDES) ARE THE REAL
  * CALCULATIONS.
  *
  * `calculateStateTaxes()` proves the `StateCalculationContext -> StateTaxResult`
@@ -34,25 +34,21 @@ import { deriveResolvedStateWageBuckets } from './wages/deriveResolvedStateWageB
  * (`deriveResolvedStateWageBuckets()`, Slice 7). State income tax
  * withholding still reports every actual tax AMOUNT as explicitly
  * not-yet-implemented, via `StateReason.METHOD_NOT_IMPLEMENTED` (Slice 8).
- * SDI (`sdi/calculateSdi.ts`, Slice 10) and PFML (`pfml/calculatePfml.ts`,
- * Slice 11) are real, resolver-driven calculations on both sides —
- * `sdiAmount()`/`pfmlAmount()` below wire them in for exactly their own
- * employee/employer components. SUTA (`suta/calculateSuta.ts`, Slice 12) is
- * real on the EMPLOYEE side only (`sutaEmployeeAmount()`) — the employer
- * side is a disclosed, unimplemented contract gap (no established rate
- * selection between `SUTA_EMPLOYER_RATE`/`SUTA_NEW_EMPLOYER_RATE`, and no
- * documented unit for `StateEmployerProfile.sutaRate`; see
- * `suta/calculateSuta.ts`'s own doc comment) and stays wired to
- * `programAmount()`'s generic not-implemented path, unchanged.
+ * SDI (`sdi/calculateSdi.ts`, Slice 10), PFML (`pfml/calculatePfml.ts`,
+ * Slice 11) and SUTA (`suta/calculateSuta.ts`, Slices 12 + 15) are real,
+ * resolver-driven calculations on both sides — `sdiAmount()`/`pfmlAmount()`/
+ * (`sutaEmployeeAmount()` + `sutaEmployerAmount()`) below wire them in for
+ * exactly their own employee/employer components. SUTA's employer side
+ * reads its rate from `context.employer.sutaRate` (the locked Slice 14
+ * contract), never from `SUTA_EMPLOYER_RATE`/`SUTA_NEW_EMPLOYER_RATE`.
  *
  * This module does not resolve rules, does not resolve taxability, and does
  * not derive wage buckets itself — those stay exactly where they already
  * live (`resolveTaxability()`, `deriveResolvedStateWageBuckets()`). It only
- * composes their already-correct outputs (and, for SDI/PFML/SUTA-employee,
- * their own calculation modules' output) into the committed `StateTaxResult`
- * shape, and is not called from `calculatePaycheck()` or wired into
- * `options.state` anywhere — that remains a later, separate integration
- * slice.
+ * composes their already-correct outputs (and, for SDI/PFML/SUTA, their own
+ * calculation modules' output) into the committed `StateTaxResult` shape,
+ * and is not called from `calculatePaycheck()` or wired into `options.state`
+ * anywhere — that remains a later, separate integration slice.
  * ===========================================================================
  */
 
@@ -244,9 +240,9 @@ function pfmlAmount(
  * bucket (`PROGRAM_BUCKET.SUTA`, unchanged) feeds a real calculation
  * (`calculateSuta.ts`, Slice 12) instead of a fabricated
  * `METHOD_NOT_IMPLEMENTED`, for the employee side only. There is no
- * `sutaAmount(..., side)` — the employer side has no calculation function to
- * call (a disclosed contract gap, see `suta/calculateSuta.ts`) and keeps
- * going through `programAmount()` exactly as before.
+ * `sutaAmount(..., side)` — the employer side (`sutaEmployerAmount()`,
+ * below) needs an extra input (`employerSutaRate`) this function has no use
+ * for, so the two stay separate rather than sharing one signature.
  *
  * If the bucket itself is unavailable, its `status`/`problem` propagate
  * VERBATIM. Only when the bucket is genuinely available does this attempt
@@ -273,6 +269,64 @@ function sutaEmployeeAmount(
   }
 
   const result = calculateSutaEmployee(ruleSet, money(bucket.amount));
+
+  if (!result.ok) {
+    return {
+      code,
+      label,
+      amount: null,
+      status: statusForStateReason(result.problem.reason),
+      problem: result.problem,
+      rules: [],
+    };
+  }
+
+  return {
+    code,
+    label,
+    amount: toStorageString(result.value.amount),
+    status: 'COMPLETE',
+    rules: mergeReferences([bucket.rules, result.value.rules]),
+  };
+}
+
+/**
+ * SUTA-EMPLOYER-specific counterpart to `programAmount()` — the SUTA wage
+ * bucket feeds a real calculation (`calculateSuta.ts`, Slice 15) instead of
+ * a fabricated `METHOD_NOT_IMPLEMENTED`. Takes `employerSutaRate`
+ * (`context.employer.sutaRate`) as an explicit parameter — the sole
+ * established employer-rate input (Slice 14's locked contract) —
+ * rather than reading `context` itself, keeping this function's inputs
+ * exactly as narrow as `sdiAmount()`/`pfmlAmount()`/`sutaEmployeeAmount()`
+ * already are.
+ *
+ * If the bucket itself is unavailable, its `status`/`problem` propagate
+ * VERBATIM. Only when the bucket is genuinely available does this attempt
+ * the real SUTA employer calculation; if THAT fails (most commonly
+ * `employerSutaRate` absent, per the locked contract), the calculation's
+ * own `StateUnavailable` is used as-is — never replaced or reinterpreted.
+ */
+function sutaEmployerAmount(
+  code: string,
+  label: string,
+  ruleSet: ResolvedStateRuleSet,
+  buckets: Readonly<Record<StateBucket, StateAmount>>,
+  employerSutaRate: string | undefined,
+): StateAmount {
+  const bucket = buckets[PROGRAM_BUCKET.SUTA];
+
+  if (bucket.amount === null) {
+    return {
+      code,
+      label,
+      amount: null,
+      status: bucket.status,
+      ...(bucket.problem === undefined ? {} : { problem: bucket.problem }),
+      rules: [],
+    };
+  }
+
+  const result = calculateSutaEmployer(ruleSet, money(bucket.amount), employerSutaRate);
 
   if (!result.ok) {
     return {
@@ -458,11 +512,12 @@ export function calculateStateTaxes(
       buckets,
       'EMPLOYER',
     );
-    const sutaEmployer = programAmount(
+    const sutaEmployer = sutaEmployerAmount(
       'SUTA_EMPLOYER',
       'SUTA employer contribution',
-      'SUTA',
+      context.workRuleSet,
       buckets,
+      context.employer.sutaRate,
     );
 
     const employerComponents: StateComponentResult[] = [
