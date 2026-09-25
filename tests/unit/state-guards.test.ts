@@ -834,3 +834,47 @@ describe('DM-03 Slice 15 scope — SUTA employer calculation implemented, on the
     expect(offenders).toEqual([]);
   });
 });
+
+describe('DM-03 Slice 17 scope — withholding methodology dispatcher, classification only', () => {
+  it('withholdingMethodology.ts exists and exports resolveWithholdingMethodology', () => {
+    const source = code(readFileSync(join(STATE, 'rules/withholdingMethodology.ts'), 'utf8'));
+    expect(source).toMatch(/export function resolveWithholdingMethodology/);
+  });
+
+  it('classifies only FORMULA and TABLE; never invents FLAT/PROGRESSIVE/NONE/HYBRID semantics', () => {
+    // The four unresolved structures must all resolve through the same
+    // SCENARIO_UNSUPPORTED branch of the switch, never through a case that
+    // returns readOk — this is the machine-enforced form of "no guessed
+    // default or fallback to FORMULA/TABLE" for this module.
+    const source = code(readFileSync(join(STATE, 'rules/withholdingMethodology.ts'), 'utf8'));
+    const formulaCase = /case 'FORMULA':\s*\n\s*return readOk/;
+    const tableCase = /case 'TABLE':\s*\n\s*return readOk/;
+    expect(source).toMatch(formulaCase);
+    expect(source).toMatch(tableCase);
+    // NONE/FLAT/PROGRESSIVE/HYBRID must be grouped into one shared
+    // readFail(...SCENARIO_UNSUPPORTED...) branch, not four separate readOk
+    // branches.
+    expect(source).not.toMatch(/case 'NONE':\s*\n\s*return readOk/);
+    expect(source).not.toMatch(/case 'FLAT':\s*\n\s*return readOk/);
+    expect(source).not.toMatch(/case 'PROGRESSIVE':\s*\n\s*return readOk/);
+    expect(source).not.toMatch(/case 'HYBRID':\s*\n\s*return readOk/);
+    expect(source).toMatch(/StateReason\.SCENARIO_UNSUPPORTED/);
+  });
+
+  it('does not run the formula interpreter, the table row selector, or any arithmetic', () => {
+    const source = code(readFileSync(join(STATE, 'rules/withholdingMethodology.ts'), 'utf8'));
+    expect(source).not.toMatch(/runStateWithholdingFormula|selectStateWithholdingTableRow/);
+    expect(source).not.toMatch(/\bsubtract\(|\bsum\(|\bmultiply\(|\bmoney\(/);
+  });
+
+  it('is not wired into calculateStateTaxes() or index.ts', () => {
+    // Slice 17's explicit boundary: contract resolution only, no wiring.
+    const source = code(readFileSync(join(STATE, 'index.ts'), 'utf8'));
+    expect(source).not.toMatch(/resolveWithholdingMethodology|withholdingMethodology/);
+  });
+
+  it('does not access a ResolvedStateRuleSet directly — classification takes an already-read detail', () => {
+    const source = code(readFileSync(join(STATE, 'rules/withholdingMethodology.ts'), 'utf8'));
+    expect(source).not.toMatch(/ResolvedStateRuleSet|stateRule\(/);
+  });
+});
