@@ -563,8 +563,8 @@ describe('limits', () => {
     expect(aboveCap.resolution.effectiveAmount.toString()).toBe('100');
   });
 
-  it('MONTHLY with a known priorAppliedAmount is supported', () => {
-    const detail = profileSetWith('TRANSIT', [
+  describe('MONTHLY (DM-03 Slice 3 — resolved via context.payPeriodIsSubMonthly)', () => {
+    const monthlyCapped = profileSetWith('TRANSIT', [
       {
         conditions: [],
         effect: 'REDUCE_WAGES',
@@ -577,41 +577,86 @@ describe('limits', () => {
         excessEffect: 'NO_CHANGE',
       },
     ]);
-    const ruleSet = ruleSetFor(detail);
-    const outcome = resolve({
-      ruleSet,
-      deductionTypeKey: 'TRANSIT',
-      applicableAmount: money('200'),
-      priorAppliedAmount: money('0'),
-    });
-    expect(outcome.ok).toBe(true);
-    if (!outcome.ok) throw new Error('expected ok');
-    expect(outcome.resolution.effectiveAmount.toString()).toBe('200');
-  });
 
-  it('MONTHLY without a known priorAppliedAmount is unsupported (no pay-frequency signal in this input contract)', () => {
-    const detail = profileSetWith('TRANSIT', [
-      {
-        conditions: [],
-        effect: 'REDUCE_WAGES',
-        limit: {
-          basis: 'MONTHLY',
-          amount: '315',
-          scope: 'PER_EMPLOYEE',
-          variantsByDiscriminator: null,
-        },
-        excessEffect: 'NO_CHANGE',
-      },
-    ]);
-    const ruleSet = ruleSetFor(detail);
-    const outcome = resolve({
-      ruleSet,
-      deductionTypeKey: 'TRANSIT',
-      applicableAmount: money('200'),
+    it('reports SCENARIO_UNSUPPORTED when payPeriodIsSubMonthly is not supplied at all', () => {
+      const ruleSet = ruleSetFor(monthlyCapped);
+      const outcome = resolve({
+        ruleSet,
+        deductionTypeKey: 'TRANSIT',
+        applicableAmount: money('200'),
+      });
+      expect(outcome.ok).toBe(false);
+      if (outcome.ok) throw new Error('expected failure');
+      expect(outcome.problem.reason).toBe('SCENARIO_UNSUPPORTED');
     });
-    expect(outcome.ok).toBe(false);
-    if (outcome.ok) throw new Error('expected failure');
-    expect(outcome.problem.reason).toBe('SCENARIO_UNSUPPORTED');
+
+    it('sub-monthly (true) without priorAppliedAmount reports SCENARIO_UNSUPPORTED, mirroring ANNUAL', () => {
+      const ruleSet = ruleSetFor(monthlyCapped);
+      const outcome = resolve({
+        ruleSet,
+        deductionTypeKey: 'TRANSIT',
+        applicableAmount: money('200'),
+        context: { payPeriodIsSubMonthly: true },
+      });
+      expect(outcome.ok).toBe(false);
+      if (outcome.ok) throw new Error('expected failure');
+      expect(outcome.problem.reason).toBe('SCENARIO_UNSUPPORTED');
+    });
+
+    it('sub-monthly (true) with a known priorAppliedAmount is supported and applies remaining cap', () => {
+      const ruleSet = ruleSetFor(monthlyCapped);
+      const outcome = resolve({
+        ruleSet,
+        deductionTypeKey: 'TRANSIT',
+        applicableAmount: money('200'),
+        context: { payPeriodIsSubMonthly: true },
+        priorAppliedAmount: money('150'),
+      });
+      expect(outcome.ok).toBe(true);
+      if (!outcome.ok) throw new Error('expected ok');
+      // remaining = max(315 - 150, 0) = 165; effective = min(200, 165)
+      expect(outcome.resolution.effectiveAmount.toString()).toBe('165');
+    });
+
+    it('monthly-or-less-frequent (false) needs no priorAppliedAmount and applies the cap directly', () => {
+      const ruleSet = ruleSetFor(monthlyCapped);
+      const belowCap = resolve({
+        ruleSet,
+        deductionTypeKey: 'TRANSIT',
+        applicableAmount: money('200'),
+        context: { payPeriodIsSubMonthly: false },
+      });
+      expect(belowCap.ok).toBe(true);
+      if (!belowCap.ok) throw new Error('expected ok');
+      expect(belowCap.resolution.effectiveAmount.toString()).toBe('200');
+
+      const aboveCap = resolve({
+        ruleSet,
+        deductionTypeKey: 'TRANSIT',
+        applicableAmount: money('400'),
+        context: { payPeriodIsSubMonthly: false },
+      });
+      expect(aboveCap.ok).toBe(true);
+      if (!aboveCap.ok) throw new Error('expected ok');
+      expect(aboveCap.resolution.effectiveAmount.toString()).toBe('315');
+    });
+
+    it('monthly-or-less-frequent (false) ignores a supplied priorAppliedAmount — it is not needed for this basis', () => {
+      const ruleSet = ruleSetFor(monthlyCapped);
+      // A caller supplying a prior amount anyway (e.g. a generic pipeline
+      // that always tracks it) must not have it wrongly subtracted from a
+      // basis that contract §9 says needs no tracking at all.
+      const outcome = resolve({
+        ruleSet,
+        deductionTypeKey: 'TRANSIT',
+        applicableAmount: money('200'),
+        context: { payPeriodIsSubMonthly: false },
+        priorAppliedAmount: money('999'),
+      });
+      expect(outcome.ok).toBe(true);
+      if (!outcome.ok) throw new Error('expected ok');
+      expect(outcome.resolution.effectiveAmount.toString()).toBe('200');
+    });
   });
 
   it('ANNUAL without prior usage is unsupported', () => {

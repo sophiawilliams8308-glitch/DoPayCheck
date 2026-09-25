@@ -53,17 +53,58 @@ import { StateRuleKey, type StateProgram } from '../ruleKeys';
  * future caller explicitly decides what a discriminator means and supplies
  * one.
  *
- * `payFrequency`: the state-domain pay-frequency string, e.g. as already
- * carried on `StateCalculationContext.payFrequency`. Needed to decide
- * whether a `MONTHLY` limit is sub-monthly (contract §9) — see
- * `resolveTaxability`'s own §13 comment for why this slice does NOT attempt
- * that distinction even though it declares the field; kept here as an
- * explicit, disclosed hook rather than silently omitted.
+ * `payPeriodIsSubMonthly` (contract §9, DM-03 Slice 3 / Task 4O-6R69):
+ * whether the CURRENT calculation's pay period occurs more than once a
+ * calendar month — the exact, and only, fact a `MONTHLY` limit basis needs
+ * beyond what `PAY_PERIOD` already needs (§9: "`MONTHLY` | ... | Only when
+ * the pay period is sub-monthly" [needs prior usage]).
+ *
+ * ===========================================================================
+ * WHY THIS IS A PLAIN BOOLEAN, NEVER A RAW `payFrequency` STRING THE
+ * RESOLVER INTERPRETS ITSELF.
+ *
+ * Slice 2 declared (and never consumed) a raw `payFrequency?: string` field
+ * here, intending the resolver to classify it internally. Slice 3's
+ * architecture review found two decisive reasons that was the wrong shape:
+ *
+ * 1. LAYERING. Every existing cross-layer import from `@/lib/calculator/`
+ *    into ANY `lib/tax/*` file (`RuleReference`, `CalculationStatus`,
+ *    `W4Input`, ...) is `import type` only, scoped to `@/lib/calculator/
+ *    types/*`. None imports executable logic, and none reaches into
+ *    `@/lib/calculator/pipeline/*`. The one existing calendar-arithmetic
+ *    utility that answers "how many periods per year does this pay
+ *    frequency have" — `lib/calculator/pipeline/pay-frequency.ts`'s
+ *    `periodsPerYear()` — lives in that pipeline layer, one level ABOVE the
+ *    engines (the calculator orchestrates the engines, never the reverse).
+ *    Having this resolver import and evaluate that function would be the
+ *    first executable, non-type dependency any `lib/tax/*` file has ever
+ *    taken on `lib/calculator/`, inverting the established direction.
+ * 2. VOCABULARY MISMATCH. That generic table is a `Record<PayFrequency,
+ *    ...>` keyed by the 7-member PRISMA `PayFrequency` enum (the
+ *    CALCULATOR's own input vocabulary). State RULE data (e.g.
+ *    `stateWithholdingTableDetailSchema`'s `payFrequencyKey`, this same
+ *    file's own condition/limit types) uses an 8-member vocabulary that adds
+ *    `SEMIANNUAL` — a value the Prisma enum, and therefore the generic
+ *    table, cannot represent at all. The two vocabularies are not the same
+ *    closed set, so there is no single existing function that already
+ *    answers "is this state-rule pay-frequency value sub-monthly" — only one
+ *    that answers it for the narrower CALCULATOR-input vocabulary, which is
+ *    not this resolver's own type to reach for.
+ *
+ * The resolver therefore never classifies a pay frequency itself. The
+ * caller — which already knows the employee's actual pay frequency (from
+ * `StateCalculationContext.payFrequency`, itself drawn from the 7-member
+ * calculator vocabulary) and already has access to `periodsPerYear()` at its
+ * own layer — resolves the calendar fact ONCE, there, and hands this
+ * resolver only the resulting boolean. `undefined` means "not resolved by
+ * the caller" and is never guessed (§9, in the same spirit as OD-2/OD-3):
+ * `MONTHLY` fails closed exactly as `ANNUAL` does without `priorAppliedAmount`.
+ * ===========================================================================
  */
 export interface TaxabilityResolutionContext {
   readonly deliveryMechanism?: StateDeliveryMechanism;
   readonly limitDiscriminator?: string;
-  readonly payFrequency?: string;
+  readonly payPeriodIsSubMonthly?: boolean;
 }
 
 export interface TaxabilityResolutionInput {
@@ -365,29 +406,44 @@ export function resolveTaxability(input: TaxabilityResolutionInput): TaxabilityR
     );
   }
 
-  // ANNUAL always needs prior usage; MONTHLY needs it only for a sub-monthly
-  // pay period (contract §9). This slice's input contract (task §6) carries
-  // no pay-frequency signal, and the state engine deliberately never reads
-  // the generic Phase 3 calendar table (the same boundary Task 4K locked for
-  // `resolveStatePayPeriodsPerYear()`). Absent that signal, MONTHLY is
-  // treated identically to ANNUAL -- gated on `priorAppliedAmount` being
-  // explicitly supplied -- which is the SAFE direction of error (it can
-  // under-support a real monthly-or-less-frequent payroll that needed no
-  // tracking, but it can never silently treat an untracked sub-monthly cap
-  // as unlimited). Disclosed as an open item, not a silent assumption.
-  const needsPriorUsage = limit.basis === 'ANNUAL' || limit.basis === 'MONTHLY';
+  // ANNUAL always needs prior usage (contract §9). MONTHLY needs it ONLY
+  // when the current pay period is sub-monthly -- a fact this resolver
+  // never derives itself (see `TaxabilityResolutionContext.payPeriodIsSubMonthly`'s
+  // own doc comment for the full architecture rationale, DM-03 Slice 3).
+  // PAY_PERIOD needs no prior usage; `prior` stays zero for it.
   let prior = money('0');
-  if (needsPriorUsage) {
+  if (limit.basis === 'ANNUAL') {
     if (input.priorAppliedAmount === undefined) {
       return scenarioUnsupported(
-        `${input.deductionTypeKey}'s limit basis is ${limit.basis}, which requires the amount ` +
-          'already applied within the period; no priorAppliedAmount was supplied (undefined is ' +
-          'never treated as zero, per OD-2)',
+        `${input.deductionTypeKey}'s limit basis is ANNUAL, which requires the amount already ` +
+          'applied within the period; no priorAppliedAmount was supplied (undefined is never ' +
+          'treated as zero, per OD-2)',
       );
     }
     prior = input.priorAppliedAmount;
+  } else if (limit.basis === 'MONTHLY') {
+    if (input.context.payPeriodIsSubMonthly === undefined) {
+      return scenarioUnsupported(
+        `${input.deductionTypeKey}'s limit basis is MONTHLY, which requires knowing whether the ` +
+          'current pay period is sub-monthly (contract §9); no context.payPeriodIsSubMonthly ' +
+          'was supplied, and this is never inferred from a raw pay-frequency string',
+      );
+    }
+    if (input.context.payPeriodIsSubMonthly) {
+      if (input.priorAppliedAmount === undefined) {
+        return scenarioUnsupported(
+          `${input.deductionTypeKey}'s limit basis is MONTHLY and the pay period is sub-monthly, ` +
+            'which requires the amount already applied within the period; no priorAppliedAmount ' +
+            'was supplied (undefined is never treated as zero, per OD-2)',
+        );
+      }
+      prior = input.priorAppliedAmount;
+    }
+    // payPeriodIsSubMonthly === false: the pay period recurs at most once a
+    // month, so the MONTHLY cap period and the current pay period coincide;
+    // no prior usage is needed (contract §9) and `prior` stays zero, exactly
+    // as PAY_PERIOD's own direct-cap application already works.
   }
-  // PAY_PERIOD needs no prior usage (contract §9); `prior` stays zero.
 
   // Steps 14-15: remaining cap, effective amount.
   const remaining = max(subtract(cap, prior), money('0'));
