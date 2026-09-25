@@ -224,9 +224,19 @@ describe('no per-state dispatch', () => {
 });
 
 describe('Step 1 scope', () => {
-  it('contains no calculation entry point yet', () => {
-    // Contracts only. A calculate function here would mean Step 2+ leaked in.
+  it('confines the calculation entry point to the one approved module', () => {
+    // Originally (af980f5, Phase 5 Step 1): "contains no calculation entry
+    // point yet" — the engine was contracts-only, and any calculateState*
+    // export here would mean Step 2+ had leaked in. The engine has since
+    // progressed through Steps 2-4 (CLAUDE.md §6); DM-03 Slice 8 added the
+    // one approved entry point, calculateStateTaxes() in
+    // lib/tax/state/index.ts. What this guard protects — calculation logic
+    // never scattered across more than one exported entry point — still
+    // holds, so the prohibition is scoped to exclude that one file rather
+    // than retired outright, mirroring the Step 3.5 boundary guard below,
+    // which excludes its own one approved exception the same way.
     const offenders = stateFiles()
+      .filter((file) => file.rel !== 'lib/tax/state/index.ts')
       .filter((file) => /export function calculateState/.test(code(file.text)))
       .map((file) => file.rel);
     expect(offenders).toEqual([]);
