@@ -1,4 +1,4 @@
-import { money } from '@/lib/core/money';
+import { money, toStorageString } from '@/lib/core/money';
 import { combineStatuses } from '@/lib/calculator/types/status';
 import type { RuleReference } from '@/lib/calculator/types/rules';
 
@@ -6,6 +6,9 @@ import type { StateCalculationContext } from './context';
 import { StateReason, statusForStateReason, stateUnavailable } from './errors/stateErrors';
 import { PROGRAM_BUCKET, type StateBucket, type StateProgram } from './ruleKeys';
 import type { TaxabilityResolutionContext } from './rules/resolveTaxability';
+import type { ResolvedStateRuleSet } from './rules/stateRuleSet';
+import { calculatePfmlEmployee, calculatePfmlEmployer } from './pfml/calculatePfml';
+import { calculateSdiEmployee, calculateSdiEmployer } from './sdi/calculateSdi';
 import type {
   StateAmount,
   StateComponentResult,
@@ -17,28 +20,30 @@ import type {
 import { deriveResolvedStateWageBuckets } from './wages/deriveResolvedStateWageBuckets';
 
 /**
- * State calculation engine — top-level entry point. DM-03 Slice 8.
+ * State calculation engine — top-level entry point. DM-03 Slice 8; SDI wired
+ * in at Slice 10; PFML wired in at Slice 11.
  *
  * ===========================================================================
- * A SHELL, NOT A TAX CALCULATOR.
+ * MOSTLY STILL A SHELL — SDI AND PFML ARE THE REAL CALCULATIONS.
  *
  * `calculateStateTaxes()` proves the `StateCalculationContext -> StateTaxResult`
- * shape end to end using the ONE thing the repository can currently compute
- * authoritatively — resolver-driven state wage buckets
- * (`deriveResolvedStateWageBuckets()`, Slice 7) — and reports every actual
- * tax AMOUNT (withholding, SDI, PFML, SUTA, employer contributions) as
- * explicitly not-yet-implemented, using the existing
- * `StateReason.METHOD_NOT_IMPLEMENTED` reason. No rate is ever applied to a
- * wage figure here: no such primitive exists anywhere in this repository
- * (Slice 8 discovery), and inventing one is explicitly out of scope.
+ * shape end to end using resolver-driven state wage buckets
+ * (`deriveResolvedStateWageBuckets()`, Slice 7). State income tax
+ * withholding and SUTA still report every actual tax AMOUNT as explicitly
+ * not-yet-implemented, via `StateReason.METHOD_NOT_IMPLEMENTED` (Slice 8).
+ * SDI (`sdi/calculateSdi.ts`, Slice 10) and PFML (`pfml/calculatePfml.ts`,
+ * Slice 11) are real, resolver-driven calculations — `sdiAmount()`/
+ * `pfmlAmount()` below wire them in for exactly their own employee/employer
+ * components, leaving `programAmount()`'s generic not-implemented path
+ * unchanged for state income tax withholding and SUTA.
  *
  * This module does not resolve rules, does not resolve taxability, and does
  * not derive wage buckets itself — those stay exactly where they already
  * live (`resolveTaxability()`, `deriveResolvedStateWageBuckets()`). It only
- * composes their already-correct outputs into the committed `StateTaxResult`
- * shape, and is not called from `calculatePaycheck()` or wired into
- * `options.state` anywhere — that remains a later, separate integration
- * slice.
+ * composes their already-correct outputs (and, for SDI/PFML, their own
+ * calculation modules' output) into the committed `StateTaxResult` shape,
+ * and is not called from `calculatePaycheck()` or wired into `options.state`
+ * anywhere — that remains a later, separate integration slice.
  * ===========================================================================
  */
 
@@ -103,6 +108,125 @@ function programAmount(
     status: statusForStateReason(problem.reason),
     problem,
     rules: [],
+  };
+}
+
+/**
+ * SDI-specific counterpart to `programAmount()` — the SDI wage bucket that
+ * program is mapped to (`PROGRAM_BUCKET.SDI`, unchanged) feeds a real
+ * calculation (`calculateSdi.ts`, Slice 10) instead of a fabricated
+ * `METHOD_NOT_IMPLEMENTED`.
+ *
+ * If the bucket itself is unavailable, its `status`/`problem` propagate
+ * VERBATIM — identical to `programAmount()`'s own bucket-failure branch,
+ * never overwritten. Only when the bucket is genuinely available does this
+ * attempt the real SDI calculation; if THAT fails (missing/unverified rate,
+ * a wage base this engine cannot yet enforce, and so on), the calculation's
+ * own `StateUnavailable` is used as-is — never replaced or reinterpreted.
+ */
+function sdiAmount(
+  code: string,
+  label: string,
+  ruleSet: ResolvedStateRuleSet,
+  buckets: Readonly<Record<StateBucket, StateAmount>>,
+  side: 'EMPLOYEE' | 'EMPLOYER',
+): StateAmount {
+  const bucket = buckets[PROGRAM_BUCKET.SDI];
+
+  if (bucket.amount === null) {
+    return {
+      code,
+      label,
+      amount: null,
+      status: bucket.status,
+      ...(bucket.problem === undefined ? {} : { problem: bucket.problem }),
+      rules: [],
+    };
+  }
+
+  const result =
+    side === 'EMPLOYEE'
+      ? calculateSdiEmployee(ruleSet, money(bucket.amount))
+      : calculateSdiEmployer(ruleSet, money(bucket.amount));
+
+  if (!result.ok) {
+    return {
+      code,
+      label,
+      amount: null,
+      status: statusForStateReason(result.problem.reason),
+      problem: result.problem,
+      rules: [],
+    };
+  }
+
+  return {
+    code,
+    label,
+    amount: toStorageString(result.value.amount),
+    status: 'COMPLETE',
+    rules: mergeReferences([bucket.rules, result.value.rules]),
+  };
+}
+
+/**
+ * PFML-specific counterpart to `programAmount()` — the PFML wage bucket that
+ * program is mapped to (`PROGRAM_BUCKET.PFML`, unchanged) feeds a real
+ * calculation (`calculatePfml.ts`, Slice 11) instead of a fabricated
+ * `METHOD_NOT_IMPLEMENTED`. Structurally mirrors `sdiAmount()` above — not
+ * shared with it (DM-03 Slice 11's own instruction: do not invent a generic
+ * abstraction merely because the two programmes look similar) — but its own
+ * bucket-failure-propagation and calculation-failure handling are identical
+ * in shape because both wrap the same established `Read<T>` -> `StateAmount`
+ * boundary every other reader in this engine already uses.
+ *
+ * If the bucket itself is unavailable, its `status`/`problem` propagate
+ * VERBATIM. Only when the bucket is genuinely available does this attempt
+ * the real PFML calculation; if THAT fails, the calculation's own
+ * `StateUnavailable` is used as-is — never replaced or reinterpreted.
+ */
+function pfmlAmount(
+  code: string,
+  label: string,
+  ruleSet: ResolvedStateRuleSet,
+  buckets: Readonly<Record<StateBucket, StateAmount>>,
+  side: 'EMPLOYEE' | 'EMPLOYER',
+): StateAmount {
+  const bucket = buckets[PROGRAM_BUCKET.PFML];
+
+  if (bucket.amount === null) {
+    return {
+      code,
+      label,
+      amount: null,
+      status: bucket.status,
+      ...(bucket.problem === undefined ? {} : { problem: bucket.problem }),
+      rules: [],
+    };
+  }
+
+  const result =
+    side === 'EMPLOYEE'
+      ? calculatePfmlEmployee(ruleSet, money(bucket.amount))
+      : calculatePfmlEmployer(ruleSet, money(bucket.amount));
+
+  if (!result.ok) {
+    return {
+      code,
+      label,
+      amount: null,
+      status: statusForStateReason(result.problem.reason),
+      problem: result.problem,
+      rules: [],
+    };
+  }
+
+  return {
+    code,
+    label,
+    amount: toStorageString(result.value.amount),
+    status: 'COMPLETE',
+    rules: mergeReferences([bucket.rules, result.value.rules]),
   };
 }
 
@@ -188,12 +312,19 @@ export function calculateStateTaxes(
     'INCOME_TAX_WITHHOLDING',
     buckets,
   );
-  const sdiEmployee = programAmount('SDI_EMPLOYEE', 'SDI employee contribution', 'SDI', buckets);
-  const pfmlEmployee = programAmount(
+  const sdiEmployee = sdiAmount(
+    'SDI_EMPLOYEE',
+    'SDI employee contribution',
+    context.workRuleSet,
+    buckets,
+    'EMPLOYEE',
+  );
+  const pfmlEmployee = pfmlAmount(
     'PFML_EMPLOYEE',
     'PFML employee contribution',
-    'PFML',
+    context.workRuleSet,
     buckets,
+    'EMPLOYEE',
   );
   const sutaEmployee = programAmount(
     'SUTA_EMPLOYEE',
@@ -249,12 +380,19 @@ export function calculateStateTaxes(
 
   let employer: StateEmployerResult | null = null;
   if (context.includeEmployerTaxes) {
-    const sdiEmployer = programAmount('SDI_EMPLOYER', 'SDI employer contribution', 'SDI', buckets);
-    const pfmlEmployer = programAmount(
+    const sdiEmployer = sdiAmount(
+      'SDI_EMPLOYER',
+      'SDI employer contribution',
+      context.workRuleSet,
+      buckets,
+      'EMPLOYER',
+    );
+    const pfmlEmployer = pfmlAmount(
       'PFML_EMPLOYER',
       'PFML employer contribution',
-      'PFML',
+      context.workRuleSet,
       buckets,
+      'EMPLOYER',
     );
     const sutaEmployer = programAmount(
       'SUTA_EMPLOYER',

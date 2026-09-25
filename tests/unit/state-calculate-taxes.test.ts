@@ -137,20 +137,40 @@ describe('resolver-backed wage buckets are populated', () => {
 });
 
 describe('employee tax amount fields are explicitly unavailable', () => {
-  it('every employee StateAmount is null with METHOD_NOT_IMPLEMENTED when its bucket is available', () => {
+  it('every non-SDI/PFML employee StateAmount is null with METHOD_NOT_IMPLEMENTED when its bucket is available', () => {
     const result = calculateStateTaxes(context({ workRuleSet: ruleSetFor(profileSet([])) }), {});
     for (const amount of [
       result.employee.incomeTaxWithheld,
       result.employee.supplementalWithheld,
-      result.employee.sdiEmployee,
-      result.employee.pfmlEmployee,
       result.employee.sutaEmployee,
-      result.employee.totalEmployeeStateTaxes,
     ]) {
       expect(amount.amount).toBeNull();
       expect(amount.problem?.reason).toBe('METHOD_NOT_IMPLEMENTED');
     }
   });
+
+  it(
+    'SDI is null, never fabricated, but for its OWN calculation reason (Slice 10: a real ' +
+      'calculation is now attempted, not a fabricated METHOD_NOT_IMPLEMENTED) — this fixture ' +
+      'supplies no SDI_WAGE_BASE rule at all, so it fails RULE_MISSING',
+    () => {
+      const result = calculateStateTaxes(context({ workRuleSet: ruleSetFor(profileSet([])) }), {});
+      expect(result.employee.sdiEmployee.amount).toBeNull();
+      expect(result.employee.sdiEmployee.problem?.reason).toBe('RULE_MISSING');
+      expect(result.employee.totalEmployeeStateTaxes.amount).toBeNull();
+    },
+  );
+
+  it(
+    'PFML is null, never fabricated, but for its OWN calculation reason (Slice 11: a real ' +
+      'calculation is now attempted, not a fabricated METHOD_NOT_IMPLEMENTED) — this fixture ' +
+      'supplies no PFML_WAGE_BASE rule at all, so it fails RULE_MISSING',
+    () => {
+      const result = calculateStateTaxes(context({ workRuleSet: ruleSetFor(profileSet([])) }), {});
+      expect(result.employee.pfmlEmployee.amount).toBeNull();
+      expect(result.employee.pfmlEmployee.problem?.reason).toBe('RULE_MISSING');
+    },
+  );
 
   it('never fabricates a zero amount', () => {
     const result = calculateStateTaxes(context({ workRuleSet: ruleSetFor(profileSet([])) }), {});
@@ -175,9 +195,14 @@ describe('employer branch respects includeEmployerTaxes', () => {
     );
     expect(result.employer).not.toBeNull();
     if (result.employer === null) throw new Error('expected employer result');
+    // SDI (Slice 10): a real calculation is attempted; this fixture supplies
+    // no SDI_WAGE_BASE rule, so it fails RULE_MISSING, not a fabricated
+    // METHOD_NOT_IMPLEMENTED.
     expect(result.employer.sdiEmployer.amount).toBeNull();
-    expect(result.employer.sdiEmployer.problem?.reason).toBe('METHOD_NOT_IMPLEMENTED');
+    expect(result.employer.sdiEmployer.problem?.reason).toBe('RULE_MISSING');
+    // PFML (Slice 11): same real-calculation-attempted story as SDI.
     expect(result.employer.pfmlEmployer.amount).toBeNull();
+    expect(result.employer.pfmlEmployer.problem?.reason).toBe('RULE_MISSING');
     expect(result.employer.sutaEmployer.amount).toBeNull();
     expect(result.employer.totalEmployerStateTaxes.amount).toBeNull();
   });
@@ -221,10 +246,16 @@ describe('bucket-level resolver failure propagation', () => {
     // Income tax: bucket fails (NOT_STATED -> SCENARIO_UNSUPPORTED), never
     // silently replaced by a "not implemented" problem.
     expect(result.employee.incomeTaxWithheld.problem?.reason).toBe('SCENARIO_UNSUPPORTED');
-    // SDI/PFML/SUTA: bucket succeeds -- the "not implemented" reason is
-    // correct here, since it is genuinely the calculation itself that is
-    // missing, not the bucket.
-    expect(result.employee.pfmlEmployee.problem?.reason).toBe('METHOD_NOT_IMPLEMENTED');
+    // SUTA: bucket succeeds -- the "not implemented" reason is correct here,
+    // since it is genuinely the calculation itself that is missing, not the
+    // bucket.
+    expect(result.employee.sutaEmployee.problem?.reason).toBe('METHOD_NOT_IMPLEMENTED');
+    // SDI/PFML (Slices 10-11): bucket succeeds too, but a real calculation is
+    // now attempted rather than a fabricated "not implemented" -- this
+    // fixture supplies no SDI_WAGE_BASE/PFML_WAGE_BASE rule, so both fail
+    // RULE_MISSING, never silently overwritten by a stale "not implemented".
+    expect(result.employee.sdiEmployee.problem?.reason).toBe('RULE_MISSING');
+    expect(result.employee.pfmlEmployee.problem?.reason).toBe('RULE_MISSING');
   });
 });
 
