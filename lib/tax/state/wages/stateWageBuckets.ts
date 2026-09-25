@@ -78,7 +78,13 @@ const BUCKET_FLAG_FIELD: Readonly<Record<StateBucket, TaxabilityFlagField>> = {
   sutaWages: 'reducesSutaWages',
 };
 
-const BUCKET_DISPLAY: Readonly<
+/**
+ * Exported (DM-03 Slice 7) so the resolver-driven wage-bucket path
+ * (`deriveResolvedStateWageBuckets.ts`) shares this exact display metadata
+ * rather than redeclaring it — purely additive, no behavioral change, no
+ * change to this module's own exports or tests beyond visibility.
+ */
+export const BUCKET_DISPLAY: Readonly<
   Record<StateBucket, { readonly code: string; readonly label: string }>
 > = {
   stateIncomeTaxWages: { code: 'STATE_INCOME_TAX_WAGES', label: 'State income tax wages' },
@@ -87,8 +93,12 @@ const BUCKET_DISPLAY: Readonly<
   sutaWages: { code: 'SUTA_WAGES', label: 'SUTA wages' },
 };
 
-/** Regular only for state income tax; regular + supplemental for everything else. */
-function grossWagesFor(
+/**
+ * Regular only for state income tax; regular + supplemental for everything
+ * else. Exported (DM-03 Slice 7) for the same reason as `BUCKET_DISPLAY`
+ * above — shared, non-behavioral, no logic change.
+ */
+export function grossWagesFor(
   bucket: StateBucket,
   wages: { readonly regular: Money; readonly supplemental: Money },
 ): Money {
