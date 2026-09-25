@@ -44,7 +44,33 @@ export interface StateElections {
 export interface StateEmployerProfile {
   /** Drives employer-size thresholds in a PROGRAM_DESCRIPTOR. */
   readonly employeeCount?: number;
-  /** The employer's experience-rated SUTA rate, which is employer-specific data. */
+  /**
+   * The employer's experience-rated SUTA rate, which is employer-specific
+   * data — an already-resolved, state-assigned figure, not looked up from
+   * `STATE.SUTA.EMPLOYER_RATE`/`STATE.SUTA.NEW_EMPLOYER_RATE`.
+   *
+   * UNIT (DM-03 Slice 13): a DECIMAL FRACTION (e.g. `"0.034"` for 3.4%),
+   * never a raw percent. This field has no companion `unit` field, unlike
+   * every rate in `stateRateDetailSchema` — but it is not undocumented: it
+   * follows the one other established convention in this codebase for a
+   * bare rate `DecimalString` with no companion unit field,
+   * `DeductionInput.percent` (`lib/calculator/types/input.ts`), whose own
+   * consumer (`calculateDeductions()`, `lib/calculator/pipeline/deductions.ts`)
+   * states directly: "Percentages are fractions of gross (e.g. '0.05' =
+   * 5%)." No second, conflicting convention exists anywhere in this
+   * repository for this shape, so this field follows the same one.
+   *
+   * Still open (DM-03 Slice 13, not resolved by this documentation): when
+   * this field is ABSENT, there is no established, deterministic way to
+   * choose between `STATE.SUTA.EMPLOYER_RATE` and
+   * `STATE.SUTA.NEW_EMPLOYER_RATE` — no employer-type/experience-rating
+   * discriminator exists anywhere in this codebase (confirmed: no
+   * `Employer` model in `prisma/schema.prisma`, no such field on
+   * `StateEmployerProfile`/`StateInput`). Inventing one is a broader
+   * product decision (how employer classification is captured at all),
+   * out of scope here — see `lib/tax/state/suta/calculateSuta.ts`'s own
+   * doc comment.
+   */
   readonly sutaRate?: DecimalString;
   /** True when an approved private plan substitutes for a state programme. */
   readonly privatePlanElected?: boolean;

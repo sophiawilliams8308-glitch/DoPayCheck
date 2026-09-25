@@ -137,12 +137,11 @@ describe('resolver-backed wage buckets are populated', () => {
 });
 
 describe('employee tax amount fields are explicitly unavailable', () => {
-  it('every non-SDI/PFML employee StateAmount is null with METHOD_NOT_IMPLEMENTED when its bucket is available', () => {
+  it('every non-SDI/PFML/SUTA employee StateAmount is null with METHOD_NOT_IMPLEMENTED when its bucket is available', () => {
     const result = calculateStateTaxes(context({ workRuleSet: ruleSetFor(profileSet([])) }), {});
     for (const amount of [
       result.employee.incomeTaxWithheld,
       result.employee.supplementalWithheld,
-      result.employee.sutaEmployee,
     ]) {
       expect(amount.amount).toBeNull();
       expect(amount.problem?.reason).toBe('METHOD_NOT_IMPLEMENTED');
@@ -169,6 +168,18 @@ describe('employee tax amount fields are explicitly unavailable', () => {
       const result = calculateStateTaxes(context({ workRuleSet: ruleSetFor(profileSet([])) }), {});
       expect(result.employee.pfmlEmployee.amount).toBeNull();
       expect(result.employee.pfmlEmployee.problem?.reason).toBe('RULE_MISSING');
+    },
+  );
+
+  it(
+    'SUTA employee is null, never fabricated, but for its OWN calculation reason (Slice 12: ' +
+      'a real calculation is now attempted for the SUTA employee side, not a fabricated ' +
+      'METHOD_NOT_IMPLEMENTED) — this fixture supplies no SUTA_WAGE_BASE rule at all, so it ' +
+      'fails RULE_MISSING',
+    () => {
+      const result = calculateStateTaxes(context({ workRuleSet: ruleSetFor(profileSet([])) }), {});
+      expect(result.employee.sutaEmployee.amount).toBeNull();
+      expect(result.employee.sutaEmployee.problem?.reason).toBe('RULE_MISSING');
     },
   );
 
@@ -246,16 +257,18 @@ describe('bucket-level resolver failure propagation', () => {
     // Income tax: bucket fails (NOT_STATED -> SCENARIO_UNSUPPORTED), never
     // silently replaced by a "not implemented" problem.
     expect(result.employee.incomeTaxWithheld.problem?.reason).toBe('SCENARIO_UNSUPPORTED');
-    // SUTA: bucket succeeds -- the "not implemented" reason is correct here,
-    // since it is genuinely the calculation itself that is missing, not the
-    // bucket.
-    expect(result.employee.sutaEmployee.problem?.reason).toBe('METHOD_NOT_IMPLEMENTED');
-    // SDI/PFML (Slices 10-11): bucket succeeds too, but a real calculation is
-    // now attempted rather than a fabricated "not implemented" -- this
-    // fixture supplies no SDI_WAGE_BASE/PFML_WAGE_BASE rule, so both fail
-    // RULE_MISSING, never silently overwritten by a stale "not implemented".
+    // SDI/PFML/SUTA-employee (Slices 10-12): bucket succeeds too, but a real
+    // calculation is now attempted rather than a fabricated "not
+    // implemented" -- this fixture supplies no SDI_WAGE_BASE/PFML_WAGE_BASE/
+    // SUTA_WAGE_BASE rule, so all three fail RULE_MISSING, never silently
+    // overwritten by a stale "not implemented".
     expect(result.employee.sdiEmployee.problem?.reason).toBe('RULE_MISSING');
     expect(result.employee.pfmlEmployee.problem?.reason).toBe('RULE_MISSING');
+    expect(result.employee.sutaEmployee.problem?.reason).toBe('RULE_MISSING');
+    // SUTA employer (Slice 12 disclosed gap): still genuinely not
+    // implemented -- the "not implemented" reason is correct here, since it
+    // is genuinely the calculation itself that is missing, not the bucket.
+    expect(result.employer?.sutaEmployer.problem?.reason).toBe('METHOD_NOT_IMPLEMENTED');
   });
 });
 

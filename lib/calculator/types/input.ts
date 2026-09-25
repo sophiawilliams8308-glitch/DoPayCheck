@@ -240,7 +240,13 @@ export interface StateInput {
   readonly allowanceCounts?: Readonly<Record<string, number>>;
   /** Drives employer-size thresholds in a state programme descriptor. */
   readonly employerEmployeeCount?: number;
-  /** The employer's experience-rated SUTA rate — employer-specific, never assumed. */
+  /**
+   * The employer's experience-rated SUTA rate — employer-specific, never
+   * assumed. UNIT (DM-03 Slice 13): a DECIMAL FRACTION (e.g. `"0.034"` for
+   * 3.4%) — see `StateEmployerProfile.sutaRate`'s own doc comment
+   * (`lib/tax/state/context.ts`, the field this maps into unchanged via
+   * `mapEmployer()`) for the full evidence.
+   */
   readonly employerSutaRate?: DecimalString;
   /** True when an approved private plan substitutes for a state programme. */
   readonly employerPlanElection?: boolean;

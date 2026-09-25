@@ -739,3 +739,32 @@ describe('Step 3.7 scope — final assembly only, no database access or re-resol
     expect(source).not.toContain('export async function assembleStateRuleSet(');
   });
 });
+
+describe('DM-03 Slice 13 scope — SUTA employer-rate contract: unit resolved, selector still open', () => {
+  it('StateEmployerProfile.sutaRate documents its unit as a decimal fraction', () => {
+    // Locks in the Slice 13 evidence-based resolution (DeductionInput.percent's
+    // established convention) against silent regression — this field has no
+    // companion `unit` field, so the documentation IS the contract.
+    const source = readFileSync(join(STATE, 'context.ts'), 'utf8');
+    expect(source).toMatch(/sutaRate\?:\s*DecimalString/);
+    expect(source).toMatch(/DECIMAL FRACTION/);
+  });
+
+  it('does not invent an employer-type/experience-rating discriminator field', () => {
+    // The still-open half of the Slice 13 gap: no selection heuristic and no
+    // new discriminator field were added, per the task's explicit boundary.
+    const offenders = stateFiles()
+      .filter((file) =>
+        /\bemployerType\b|\bisNewEmployer\b|\bexperienceRating\b|\bemployerClassification\b/.test(
+          code(file.text),
+        ),
+      )
+      .map((file) => file.rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it('calculateSuta.ts still exports no employer-side calculation function', () => {
+    const suta = code(readFileSync(join(STATE, 'suta/calculateSuta.ts'), 'utf8'));
+    expect(suta).not.toMatch(/export function calculateSutaEmployer/);
+  });
+});
