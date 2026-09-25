@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { StateRuleKey } from '../ruleKeys';
+import { ALL_STATE_PROGRAMS, StateProgram, StateRuleKey } from '../ruleKeys';
 
 /**
  * State rule detail shapes — Phase 5 Step 1.
@@ -32,6 +32,20 @@ const decimalString = z
 
 /** `null` records "not stated by the source", which is never the same as "0". */
 const nullableDecimal = decimalString.nullable();
+
+/** Strictly greater than zero — a decimal string, never a float. Negative and zero are both
+ * rejected by string inspection, never by converting through `Number()`.
+ *
+ * The zero pattern matches ANY number of leading zeros before an optional decimal point
+ * followed by ANY number of trailing zero digits (`0+(\.0+)?`), not just the single-digit
+ * `"0"`/`"0.0"` forms — `"00"` and `"000.00"` are exactly as numerically zero as `"0"` and
+ * `"0.00"` are, and 4O-6R64 found the prior single-zero-digit pattern let them slip through.
+ * A non-zero value with leading zeros (`"0001"`, `"0001.00"`) still contains a non-zero digit,
+ * so it never matches this pattern and is correctly accepted. */
+const positiveDecimalString = decimalString.refine(
+  (value) => !value.startsWith('-') && !/^0+(\.0+)?$/.test(value),
+  'Must be a positive decimal number greater than zero',
+);
 
 /**
  * Filing status is FREE TEXT, not an enum.
@@ -290,14 +304,293 @@ export const stateFormulaStepsDetailSchema = z.object({
  */
 export const StateTaxability = z.enum(['TRUE', 'FALSE', 'NOT_STATED']);
 
-export const stateTaxabilityProfileDetailSchema = z.object({
-  shape: z.literal('TAXABILITY_PROFILE'),
-  deductionTypeKey: z.string().trim().min(1),
-  reducesStateIncomeTaxWages: StateTaxability,
-  reducesSdiWages: StateTaxability,
-  reducesPfmlWages: StateTaxability,
-  reducesSutaWages: StateTaxability,
+export const stateTaxabilityProfileDetailSchema = z
+  .object({
+    shape: z.literal('TAXABILITY_PROFILE'),
+    deductionTypeKey: z.string().trim().min(1),
+    reducesStateIncomeTaxWages: StateTaxability,
+    reducesSdiWages: StateTaxability,
+    reducesPfmlWages: StateTaxability,
+    reducesSutaWages: StateTaxability,
+  })
+  // `.strict()` (4O-6R65, contract §13.8): a payload that ALSO carries a DM-03 field (e.g.
+  // `profiles`) alongside every legacy field is a data defect, never legacy data with an
+  // ignorable extra key — the plain (non-strict) object shape used to silently strip such a
+  // field instead of rejecting the payload. Every currently-legacy record uses exactly these
+  // five fields, so `.strict()` accepts unchanged everything it already accepted.
+  .strict();
+
+// --- TAXABILITY_PROFILE_SET (DM-03) ------------------------------------------
+/**
+ * DM-03 — State Deduction Taxability Contract (2026-09-19), §5.
+ *
+ * ===========================================================================
+ * A NEW `shape`, NOT A REPLACEMENT. Registered alongside `stateTaxabilityProfileDetailSchema`
+ * under the same `StateRuleKey.TAXABILITY_PROFILE` key via a discriminated union on `shape`
+ * (contract §13.2: "The existing `shape` field is the discriminator. DM-03 adds one new `shape`
+ * value" — reusing the existing per-key registry slot, never a second registry).
+ *
+ * A COLLECTION, NOT ONE ROW PER DEDUCTION TYPE. `TaxRule_no_overlapping_active_versions`
+ * excludes on the bare `ruleKey` alone (no jurisdiction or payload term), so only one ACTIVE
+ * row can exist per jurisdiction at a time — every `deductionTypeKey` a state publishes must
+ * live inside one row's `profiles` collection, exactly as `stateWithholdingTableDetailSchema`'s
+ * `rows` array already does for wage brackets (contract §19.1 item 2; 4O-6R60C/4O-6R61 finding).
+ *
+ * NO GENERIC CONDITION ENGINE. The mutual-exclusivity check below computes each non-default
+ * variant's matching set as a subset of the four, closed, enumerable `DELIVERY_MECHANISM`
+ * values — finite set arithmetic over a fixed universe, not an expression evaluator, and not
+ * extensible to a dimension the contract has not defined (contract §10.1: adding a dimension
+ * "is a contract amendment, not an implementation choice").
+ * ===========================================================================
+ */
+
+/** Contract §11 — the closed delivery-mechanism vocabulary. No other value is ever added here
+ * without a contract amendment. */
+export const StateDeliveryMechanism = z.enum([
+  'CAFETERIA_PLAN',
+  'PAYROLL_DEDUCTION',
+  'EMPLOYER_PROVIDED',
+  'EMPLOYEE_CONTRIBUTION',
+]);
+export type StateDeliveryMechanism = z.infer<typeof StateDeliveryMechanism>;
+
+const ALL_DELIVERY_MECHANISMS = StateDeliveryMechanism.options;
+
+/** Contract §5.5 — the only comparison operators a condition may use. */
+export const StateTaxabilityConditionOperator = z.enum(['EQUALS', 'NOT_EQUALS', 'IN', 'NOT_IN']);
+
+/** Contract §10.1 — `DELIVERY_MECHANISM` is the only defined dimension in this contract
+ * version; a `z.literal`, not an enum, so adding a second dimension is a schema change (a
+ * contract amendment), never a silently-accepted new value. */
+export const stateTaxabilityConditionSchema = z.object({
+  dimension: z.literal('DELIVERY_MECHANISM'),
+  operator: StateTaxabilityConditionOperator,
+  values: z.array(StateDeliveryMechanism).min(1),
 });
+export type StateTaxabilityCondition = z.infer<typeof stateTaxabilityConditionSchema>;
+
+/** Contract §6.1 — the exact four allowed treatment directions. */
+export const StateTaxabilityEffect = z.enum([
+  'REDUCE_WAGES',
+  'INCREASE_WAGES',
+  'NO_CHANGE',
+  'NOT_STATED',
+]);
+
+/** Contract §9 — no default; a limit without a basis is invalid (§14 rule 9). */
+export const StateTaxabilityLimitBasis = z.enum(['ANNUAL', 'MONTHLY', 'PLAN_YEAR', 'PAY_PERIOD']);
+
+/** Contract §8.3 — no `PER_PROGRAM` scope is defined; no verified use case exists. */
+export const StateTaxabilityLimitScope = z.enum(['PER_EMPLOYEE', 'PER_EMPLOYEE_PER_PLAN']);
+
+const stateTaxabilityLimitDiscriminatorEntrySchema = z.object({
+  discriminator: z.string().trim().min(1),
+  amount: positiveDecimalString,
+});
+
+/** Contract §8.5 — at most one `variantsByDiscriminator` entry may match at resolution time;
+ * this schema only enforces that the entries themselves are structurally valid and unique. */
+export const stateTaxabilityLimitSchema = z
+  .object({
+    basis: StateTaxabilityLimitBasis,
+    amount: positiveDecimalString,
+    scope: StateTaxabilityLimitScope,
+    variantsByDiscriminator: z.array(stateTaxabilityLimitDiscriminatorEntrySchema).nullable(),
+  })
+  .superRefine((limit, ctx) => {
+    if (limit.variantsByDiscriminator === null) {
+      return;
+    }
+    const seen = new Set<string>();
+    for (const [index, entry] of limit.variantsByDiscriminator.entries()) {
+      if (seen.has(entry.discriminator)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Duplicate variantsByDiscriminator entry for discriminator "${entry.discriminator}"`,
+          path: ['variantsByDiscriminator', index, 'discriminator'],
+        });
+      }
+      seen.add(entry.discriminator);
+    }
+  });
+
+/** Contract §5.3, §14 rules 8/12/13 — one conditioned treatment. `limit` is required and
+ * nullable (omission is a schema error, not "unlimited" — contract §8.1); `excessEffect` is
+ * required exactly when `limit` is non-null (§8.4) and forbidden on `NO_CHANGE`/`NOT_STATED`/
+ * `INCREASE_WAGES` (§6.3, §14 rule 13). */
+export const stateTaxabilityVariantSchema = z
+  .object({
+    conditions: z.array(stateTaxabilityConditionSchema),
+    effect: StateTaxabilityEffect,
+    limit: stateTaxabilityLimitSchema.nullable(),
+    excessEffect: z.enum(['NO_CHANGE', 'NOT_STATED']).optional(),
+    notes: z.string().optional(),
+  })
+  .superRefine((variant, ctx) => {
+    const limitForbidden =
+      variant.effect === 'NO_CHANGE' ||
+      variant.effect === 'NOT_STATED' ||
+      variant.effect === 'INCREASE_WAGES';
+
+    if (limitForbidden && variant.limit !== null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `limit must be null when effect is ${variant.effect}`,
+        path: ['limit'],
+      });
+    }
+
+    if (variant.limit !== null && variant.excessEffect === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'excessEffect is required whenever limit is non-null',
+        path: ['excessEffect'],
+      });
+    }
+    if (variant.limit === null && variant.excessEffect !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'excessEffect is forbidden when limit is null',
+        path: ['excessEffect'],
+      });
+    }
+  });
+export type StateTaxabilityVariant = z.infer<typeof stateTaxabilityVariantSchema>;
+
+/** Operators whose match set is the named values themselves, rather than their complement.
+ * Written as a membership set (never a direct `===` comparison against this operator's own
+ * two-letter name) purely because that exact token shape is indistinguishable from a two-letter
+ * postal-code comparison this repository's own architectural guard
+ * (`tests/unit/state-guards.test.ts`, "no per-state dispatch") flags on sight — the contract's
+ * operator vocabulary happens to collide with one such code. The comparison itself has nothing
+ * to do with any jurisdiction. */
+const INCLUSIVE_CONDITION_OPERATORS = new Set<z.infer<typeof StateTaxabilityConditionOperator>>([
+  'EQUALS',
+  StateTaxabilityConditionOperator.enum.IN,
+]);
+
+/** The set of `DELIVERY_MECHANISM` values one condition matches — closed-universe set
+ * arithmetic, never a general evaluator (see this section's own module doc comment). */
+function conditionMatchSet(
+  condition: StateTaxabilityCondition,
+): ReadonlySet<StateDeliveryMechanism> {
+  const named = new Set(condition.values);
+  if (INCLUSIVE_CONDITION_OPERATORS.has(condition.operator)) {
+    return named;
+  }
+  return new Set(ALL_DELIVERY_MECHANISMS.filter((value) => !named.has(value)));
+}
+
+/** A variant's own resolved match set — the intersection of every one of its conditions
+ * (contract §10.2: a variant's conditions together select whether it applies). An empty
+ * `conditions` array (the default variant) is never passed here — callers exclude it. */
+function variantMatchSet(
+  conditions: readonly StateTaxabilityCondition[],
+): ReadonlySet<StateDeliveryMechanism> {
+  return conditions.reduce<ReadonlySet<StateDeliveryMechanism>>(
+    (acc, condition) =>
+      new Set([...acc].filter((value) => conditionMatchSet(condition).has(value))),
+    new Set(ALL_DELIVERY_MECHANISMS),
+  );
+}
+
+function intersects<T>(a: ReadonlySet<T>, b: ReadonlySet<T>): boolean {
+  for (const value of a) {
+    if (b.has(value)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Contract §5.2, §10.2, §14 rules 4-6 — one program's treatment. */
+export const stateProgramTreatmentSchema = z
+  .object({
+    variants: z.array(stateTaxabilityVariantSchema).min(1),
+  })
+  .superRefine((treatment, ctx) => {
+    const defaultIndices: number[] = [];
+    treatment.variants.forEach((variant, index) => {
+      if (variant.conditions.length === 0) {
+        defaultIndices.push(index);
+      }
+    });
+
+    if (defaultIndices.length > 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'At most one variant may have empty conditions (the default)',
+        path: ['variants'],
+      });
+    } else if (defaultIndices.length === 1 && defaultIndices[0] !== treatment.variants.length - 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'The default variant (empty conditions) must be last',
+        path: ['variants', defaultIndices[0]!],
+      });
+    }
+
+    const nonDefault = treatment.variants
+      .map((variant, index) => ({ index, variant }))
+      .filter(({ variant }) => variant.conditions.length > 0);
+
+    for (let i = 0; i < nonDefault.length; i += 1) {
+      for (let j = i + 1; j < nonDefault.length; j += 1) {
+        const left = nonDefault[i]!;
+        const right = nonDefault[j]!;
+        if (
+          intersects(
+            variantMatchSet(left.variant.conditions),
+            variantMatchSet(right.variant.conditions),
+          )
+        ) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Variants at index ${String(left.index)} and ${String(right.index)} are not mutually exclusive`,
+            path: ['variants', right.index],
+          });
+        }
+      }
+    }
+  });
+
+const stateProgramKeySchema = z.enum(
+  ALL_STATE_PROGRAMS as unknown as [StateProgram, ...StateProgram[]],
+);
+
+/** Contract §5.1 — one deduction type's treatment across every program it affects. Absent
+ * program key = `NOT_STATED` for that program (contract §5.1, §14.6) — never invented. */
+export const stateDeductionTaxabilityProfileSchema = z.object({
+  deductionTypeKey: z.string().trim().min(1),
+  // `z.partialRecord`, not `z.record`: an absent program key means NOT_STATED for that
+  // program (contract §5.1, §14.6) — `z.record` over an enum key requires every key present,
+  // which would force every profile to declare all four programs even when most say nothing.
+  programTreatments: z.partialRecord(stateProgramKeySchema, stateProgramTreatmentSchema),
+});
+
+/** Contract §5.1 outer record — the collection payload this rule key's `TaxRule` row carries. */
+export const stateTaxabilityProfileSetDetailSchema = z
+  .object({
+    shape: z.literal('TAXABILITY_PROFILE_SET'),
+    profiles: z.array(stateDeductionTaxabilityProfileSchema),
+  })
+  // `.strict()` (4O-6R65, contract §13.8): the mirror-image hybrid — a payload carrying every
+  // legacy field (`reducesStateIncomeTaxWages` etc.) alongside this shape's own `profiles`
+  // field — must fail the same way, not silently drop the stray legacy fields.
+  .strict()
+  .superRefine((detail, ctx) => {
+    const seen = new Set<string>();
+    for (const [index, profile] of detail.profiles.entries()) {
+      if (seen.has(profile.deductionTypeKey)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Duplicate deductionTypeKey "${profile.deductionTypeKey}" in profiles`,
+          path: ['profiles', index, 'deductionTypeKey'],
+        });
+      }
+      seen.add(profile.deductionTypeKey);
+    }
+  });
 
 // --- SUPPLEMENTAL_TREATMENT -------------------------------------------------
 export const stateSupplementalTreatmentDetailSchema = z.object({
@@ -469,6 +762,10 @@ export type StateCountByPayPeriodDetail = z.infer<typeof stateCountByPayPeriodDe
 export type StateMethodDescriptorDetail = z.infer<typeof stateMethodDescriptorDetailSchema>;
 export type StateFormulaStepsDetail = z.infer<typeof stateFormulaStepsDetailSchema>;
 export type StateTaxabilityProfileDetail = z.infer<typeof stateTaxabilityProfileDetailSchema>;
+export type StateTaxabilityProfileSetDetail = z.infer<typeof stateTaxabilityProfileSetDetailSchema>;
+export type StateDeductionTaxabilityProfile = z.infer<typeof stateDeductionTaxabilityProfileSchema>;
+export type StateProgramTreatment = z.infer<typeof stateProgramTreatmentSchema>;
+export type StateTaxabilityLimit = z.infer<typeof stateTaxabilityLimitSchema>;
 export type StateSupplementalTreatmentDetail = z.infer<
   typeof stateSupplementalTreatmentDetailSchema
 >;
@@ -502,7 +799,15 @@ export const STATE_DETAIL_SCHEMAS = {
   [StateRuleKey.WITHHOLDING_FILING_STATUS_MAP]: stateFilingStatusMapDetailSchema,
   [StateRuleKey.WITHHOLDING_ELECTION_FORM]: stateElectionFormSchemaDetailSchema,
 
-  [StateRuleKey.TAXABILITY_PROFILE]: stateTaxabilityProfileDetailSchema,
+  // DM-03: a plain `z.union`, not `z.discriminatedUnion` — the DM-03 arm carries its own
+  // `.superRefine()` (duplicate `deductionTypeKey` detection), and `discriminatedUnion`
+  // requires every member to be a bare `ZodObject` it can introspect `.shape` on directly.
+  // `validateStateDetail()` only ever calls `.safeParse()` generically (below), so a union
+  // costs nothing here — no registry redesign, no second registry, one entry, same key.
+  [StateRuleKey.TAXABILITY_PROFILE]: z.union([
+    stateTaxabilityProfileDetailSchema,
+    stateTaxabilityProfileSetDetailSchema,
+  ]),
 
   [StateRuleKey.SDI_PROGRAM]: stateProgramDescriptorDetailSchema,
   [StateRuleKey.SDI_EMPLOYEE_RATE]: stateRateDetailSchema,
