@@ -878,3 +878,50 @@ describe('DM-03 Slice 17 scope — withholding methodology dispatcher, classific
     expect(source).not.toMatch(/ResolvedStateRuleSet|stateRule\(/);
   });
 });
+
+describe('DM-03 Slice 18 scope — withholding table reader, read-only', () => {
+  it('withholdingTableReader.ts exists and exports readWithholdingTable', () => {
+    const source = code(readFileSync(join(STATE, 'rules/withholdingTableReader.ts'), 'utf8'));
+    expect(source).toMatch(/export function readWithholdingTable/);
+  });
+
+  it('delegates existence/verification/schema handling entirely to readDetail()', () => {
+    const source = code(readFileSync(join(STATE, 'rules/withholdingTableReader.ts'), 'utf8'));
+    expect(source).toMatch(/readDetail\(/);
+    // No second existence/verification check duplicated locally.
+    expect(source).not.toMatch(/verificationStatus\s*===|verificationStatus\s*!==/);
+  });
+
+  it('performs no row selection, arithmetic, or filing-status/pay-frequency matching', () => {
+    const source = code(readFileSync(join(STATE, 'rules/withholdingTableReader.ts'), 'utf8'));
+    expect(source).not.toMatch(/selectStateWithholdingTableRow/);
+    expect(source).not.toMatch(/\bsubtract\(|\bsum\(|\bmultiply\(|\bmoney\(|\bcompare\(/);
+    expect(source).not.toMatch(/filingStatus\s*===|payFrequency\s*===/);
+  });
+
+  it('does not duplicate methodology dispatch logic and imports no federal module', () => {
+    const source = code(readFileSync(join(STATE, 'rules/withholdingTableReader.ts'), 'utf8'));
+    expect(source).not.toMatch(/withholdingMethodology|resolveWithholdingMethodology/);
+    expect(source).not.toMatch(/tax\/federal|lib\/calculator/);
+  });
+
+  it('is not wired into calculateStateTaxes(), index.ts, or the Slice 17 dispatcher', () => {
+    // Slice 18's explicit boundary: reader contract only, no wiring.
+    const indexSource = code(readFileSync(join(STATE, 'index.ts'), 'utf8'));
+    expect(indexSource).not.toMatch(/readWithholdingTable|withholdingTableReader/);
+    const methodologySource = code(
+      readFileSync(join(STATE, 'rules/withholdingMethodology.ts'), 'utf8'),
+    );
+    expect(methodologySource).not.toMatch(/readWithholdingTable|withholdingTableReader/);
+  });
+
+  it('does not modify the existing selector file — withholdingTable.ts is untouched by this reader', () => {
+    // The reader lives in its own file, mirroring the existing
+    // withholdingFormula.ts (reader) / withholdingFormulaInterpreter.ts
+    // (consumer) split, rather than being merged into or renaming the
+    // already-committed selector module.
+    const selectorSource = code(readFileSync(join(STATE, 'rules/withholdingTable.ts'), 'utf8'));
+    expect(selectorSource).toMatch(/export function selectStateWithholdingTableRow/);
+    expect(selectorSource).not.toMatch(/export function readWithholdingTable\b/);
+  });
+});
