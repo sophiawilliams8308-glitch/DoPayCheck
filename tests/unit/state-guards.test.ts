@@ -983,16 +983,18 @@ describe('DM-03 Slice 19 scope — rounding: ROUND stays excluded, appliedAt sta
     expect(source).not.toMatch(/readWithholdingRoundingPolicy/);
   });
 
-  it('appliedAt is never read to branch execution anywhere in state code', () => {
-    // Confirmed by DM-03 Slice 19 discovery: `.appliedAt` is read in exactly
-    // one place in the entire state namespace (withholdingRoundingPolicy.ts's
-    // own pass-through field mapping) and nowhere selects a scale, a
-    // rounding mode, or any other behavior — mirroring federal's own
-    // `federal-rounding.ts`, where `appliedAt` likewise drives only a
-    // disclosure string, never a branch. Inventing such a branch would be
-    // exactly the guessed semantic DM-03 Slice 19 was told not to add.
+  it('appliedAt branches execution ONLY at the DM-03 Slice 28 orchestrator boundary, nowhere else', () => {
+    // Slice 19 found `.appliedAt` read in exactly one place (the reader's own
+    // pass-through field mapping) with no execution branch anywhere. Slice
+    // 26/27 then locked the one place it MAY branch execution: the
+    // `incomeTaxWithheldAmount()` boundary in index.ts, distinguishing
+    // TAX_LEVEL (round) from STEP_LEVEL (METHOD_NOT_IMPLEMENTED) — per the
+    // Slice 26/27 architecture decision, implemented in Slice 28. It must
+    // still never branch execution anywhere else in the state namespace
+    // (the formula interpreter, the reader itself, or any other module).
     const offenders = stateFiles()
       .filter((file) => !file.rel.endsWith('withholdingRoundingPolicy.ts'))
+      .filter((file) => !file.rel.endsWith('index.ts'))
       .filter((file) => /\.appliedAt\b/.test(code(file.text)))
       .map((file) => file.rel);
     expect(offenders).toEqual([]);
@@ -1021,14 +1023,16 @@ describe('DM-03 Slice 19 scope — rounding: ROUND stays excluded, appliedAt sta
     expect(source).not.toMatch(/\bround\(/);
   });
 
-  it('is not wired into calculateStateTaxes() or index.ts', () => {
-    // Slice 19's explicit boundary: no new calculation orchestration.
-    // `StateMethodology.roundingPolicyId` is a pre-existing field
-    // (predating this slice, already hardcoded to `null` in index.ts) —
-    // this guard checks only that Slice 19 did not add a call to the
-    // reader itself, not that the pre-existing field name is absent.
+  it('IS wired into calculateStateTaxes()/index.ts as of DM-03 Slice 28, reusing the existing reader unmodified', () => {
+    // Slice 19's own boundary was "no new calculation orchestration yet" —
+    // true at the time, but superseded once Slice 26/27 locked the rounding
+    // architecture and Slice 28 implemented it. This guard now protects the
+    // OPPOSITE fact: `readWithholdingRoundingPolicy()` (still unmodified,
+    // still delegating entirely to `readDetail()` per the earlier test in
+    // this block) IS called from index.ts, and nowhere is a second, parallel
+    // reader introduced to bypass it.
     const source = code(readFileSync(join(STATE, 'index.ts'), 'utf8'));
-    expect(source).not.toMatch(/readWithholdingRoundingPolicy/);
+    expect(source).toMatch(/readWithholdingRoundingPolicy/);
   });
 
   it('does not modify Slice 17 methodology dispatch or Slice 18 table reader semantics', () => {

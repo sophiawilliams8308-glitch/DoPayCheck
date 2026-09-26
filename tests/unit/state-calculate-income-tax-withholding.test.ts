@@ -67,7 +67,10 @@ function reference(
 function availableEntry(
   key: StateRuleKey,
   detail: unknown,
-  overrides: { referenceOverrides?: { ruleId?: string; version?: number } } = {},
+  overrides: {
+    referenceOverrides?: { ruleId?: string; version?: number };
+    verificationStatus?: string;
+  } = {},
 ): { available: true; rule: ResolvedStateRule } {
   return {
     available: true,
@@ -75,7 +78,7 @@ function availableEntry(
       key,
       reference: reference(key, overrides.referenceOverrides),
       detail,
-      verificationStatus: 'VERIFIED',
+      verificationStatus: overrides.verificationStatus ?? 'VERIFIED',
     },
   };
 }
@@ -154,11 +157,40 @@ function standardDeductionDetail(amount: string) {
   };
 }
 
-/** A full FORMULA-path ruleset: taxability (empty profiles, wages unreduced),
- * WITHHOLDING_METHOD -> FORMULA, WITHHOLDING_FORMULA with one
- * SUBTRACT_STANDARD_DEDUCTION step, and the deduction rule it needs. */
-function formulaRuleSet(): ResolvedStateRuleSet {
-  return buildRuleSet({
+/** DM-03 Slice 28: minimal synthetic `WITHHOLDING_ROUNDING_POLICY` detail.
+ * Defaults match the task's own minimal-valid-shape suggestion
+ * (currencyScale 2, HALF_UP, TAX_LEVEL) so every default rounding-related
+ * assertion in this file is deterministic without re-stating the shape. */
+const ROUNDING_POLICY_ID = 'TEST-ROUNDING-POLICY';
+function roundingPolicyDetail(
+  overrides: Partial<{
+    policyId: string;
+    currencyScale: number;
+    currencyMode: 'HALF_UP' | 'HALF_EVEN' | 'DOWN' | 'UP';
+    intermediateScale: number;
+    appliedAt: 'TAX_LEVEL' | 'STEP_LEVEL';
+    mandatedBySource: boolean;
+  }> = {},
+) {
+  return {
+    shape: 'ROUNDING_POLICY',
+    policyId: overrides.policyId ?? ROUNDING_POLICY_ID,
+    currencyScale: overrides.currencyScale ?? 2,
+    currencyMode: overrides.currencyMode ?? 'HALF_UP',
+    intermediateScale: overrides.intermediateScale ?? 10,
+    appliedAt: overrides.appliedAt ?? 'TAX_LEVEL',
+    mandatedBySource: overrides.mandatedBySource ?? true,
+  };
+}
+
+/** The non-rounding-policy entries every FORMULA-path fixture in this file
+ * shares — taxability (empty profiles, wages unreduced), WITHHOLDING_METHOD
+ * -> FORMULA, WITHHOLDING_FORMULA with one SUBTRACT_STANDARD_DEDUCTION step,
+ * and the deduction rule it needs. Kept separate from `formulaRuleSet()` so
+ * the Slice 28 "missing rounding policy" test can build the identical
+ * fixture MINUS the rounding-policy entry, rather than duplicating it. */
+function formulaEntries(): Partial<Record<StateRuleKey, StateRuleEntry>> {
+  return {
     [StateRuleKey.TAXABILITY_PROFILE]: availableEntry(
       StateRuleKey.TAXABILITY_PROFILE,
       profileSet(),
@@ -172,6 +204,19 @@ function formulaRuleSet(): ResolvedStateRuleSet {
       formulaDetail([step(0, 'SUBTRACT_STANDARD_DEDUCTION')]),
     ),
     [DEDUCTION_KEY]: availableEntry(DEDUCTION_KEY, standardDeductionDetail('100')),
+  };
+}
+
+/** A full FORMULA-path ruleset, INCLUDING a valid `WITHHOLDING_ROUNDING_POLICY`
+ * (required as of Slice 28 — see `formulaEntries()`'s own doc comment for why
+ * the two are kept separate). */
+function formulaRuleSet(): ResolvedStateRuleSet {
+  return buildRuleSet({
+    ...formulaEntries(),
+    [StateRuleKey.WITHHOLDING_ROUNDING_POLICY]: availableEntry(
+      StateRuleKey.WITHHOLDING_ROUNDING_POLICY,
+      roundingPolicyDetail(),
+    ),
   });
 }
 
@@ -271,6 +316,10 @@ describe('income tax withholding — bucket + formula provenance merge', () => {
         formulaDetail([step(0, 'SUBTRACT_STANDARD_DEDUCTION')]),
       ),
       [DEDUCTION_KEY]: availableEntry(DEDUCTION_KEY, standardDeductionDetail('100')),
+      [StateRuleKey.WITHHOLDING_ROUNDING_POLICY]: availableEntry(
+        StateRuleKey.WITHHOLDING_ROUNDING_POLICY,
+        roundingPolicyDetail(),
+      ),
     });
     const result = calculateStateTaxes(
       contextWith({
@@ -317,6 +366,10 @@ describe('income tax withholding — cross-boundary deduplication', () => {
       [DEDUCTION_KEY]: availableEntry(DEDUCTION_KEY, standardDeductionDetail('100'), {
         referenceOverrides: { ruleId: sharedRuleId, version: 1 },
       }),
+      [StateRuleKey.WITHHOLDING_ROUNDING_POLICY]: availableEntry(
+        StateRuleKey.WITHHOLDING_ROUNDING_POLICY,
+        roundingPolicyDetail(),
+      ),
     });
     const result = calculateStateTaxes(
       contextWith({
@@ -480,6 +533,10 @@ describe('income tax withholding — filing status', () => {
         unit: 'ANNUAL',
         amounts: [{ filingStatus: stateNativeStatus, amount: '50' }],
       }),
+      [StateRuleKey.WITHHOLDING_ROUNDING_POLICY]: availableEntry(
+        StateRuleKey.WITHHOLDING_ROUNDING_POLICY,
+        roundingPolicyDetail(),
+      ),
     });
     const result = calculateStateTaxes(
       contextWith({ workRuleSet: ruleSet }, stateNativeStatus),
@@ -512,6 +569,10 @@ describe('income tax withholding — pay frequency', () => {
           shape: 'COUNT_BY_PAY_PERIOD',
           counts: [{ payFrequency: 'BIWEEKLY', periodsPerYear: 26 }],
         },
+      ),
+      [StateRuleKey.WITHHOLDING_ROUNDING_POLICY]: availableEntry(
+        StateRuleKey.WITHHOLDING_ROUNDING_POLICY,
+        roundingPolicyDetail(),
       ),
     });
     // contextWith() defaults payFrequency to 'BIWEEKLY'.
@@ -547,5 +608,203 @@ describe('income tax withholding — pay frequency', () => {
 
     expect(result.employee.incomeTaxWithheld.amount).toBeNull();
     expect(result.employee.incomeTaxWithheld.problem?.reason).toBe('SCENARIO_UNSUPPORTED');
+  });
+});
+
+/**
+ * DM-03 Slice 28 — final rounding, per the Slice 26/27 locked contract.
+ *
+ * `roundingRuleSet()` reuses `formulaEntries()`'s SUBTRACT_STANDARD_DEDUCTION
+ * FORMULA path with a zero-amount deduction (a no-op subtraction) so the
+ * bucket's own `wages.regular` value reaches rounding UNCHANGED — letting
+ * each test pick an exact decimal wage value that lands on a specific
+ * rounding boundary for the mode/scale under test.
+ */
+function roundingRuleSet(
+  policyOverrides: Parameters<typeof roundingPolicyDetail>[0] = {},
+): ResolvedStateRuleSet {
+  return buildRuleSet({
+    [StateRuleKey.TAXABILITY_PROFILE]: availableEntry(
+      StateRuleKey.TAXABILITY_PROFILE,
+      profileSet(),
+    ),
+    [StateRuleKey.WITHHOLDING_METHOD]: availableEntry(
+      StateRuleKey.WITHHOLDING_METHOD,
+      methodDetail('FORMULA'),
+    ),
+    [StateRuleKey.WITHHOLDING_FORMULA]: availableEntry(
+      StateRuleKey.WITHHOLDING_FORMULA,
+      formulaDetail([step(0, 'SUBTRACT_STANDARD_DEDUCTION')]),
+    ),
+    [DEDUCTION_KEY]: availableEntry(DEDUCTION_KEY, standardDeductionDetail('0')),
+    [StateRuleKey.WITHHOLDING_ROUNDING_POLICY]: availableEntry(
+      StateRuleKey.WITHHOLDING_ROUNDING_POLICY,
+      roundingPolicyDetail(policyOverrides),
+    ),
+  });
+}
+
+function withWages(ruleSet: ResolvedStateRuleSet, regular: string): StateCalculationContext {
+  return contextWith({ workRuleSet: ruleSet, wages: { regular, supplemental: '0' } });
+}
+
+describe('income tax withholding — TAX_LEVEL rounding', () => {
+  it('rounds the final formula amount at a real rounding boundary (Test 1)', () => {
+    const result = calculateStateTaxes(withWages(roundingRuleSet(), '1000.005'), {});
+    expect(result.employee.incomeTaxWithheld.status).toBe('COMPLETE');
+    expect(result.employee.incomeTaxWithheld.amount).toBe('1000.01');
+  });
+
+  it('HALF_UP rounds 10.125 to 10.13 at scale 2 (Test 2)', () => {
+    const result = calculateStateTaxes(
+      withWages(roundingRuleSet({ currencyMode: 'HALF_UP' }), '10.125'),
+      {},
+    );
+    expect(result.employee.incomeTaxWithheld.amount).toBe('10.13');
+  });
+
+  it('HALF_EVEN rounds the same 10.125 to 10.12 (the preceding digit is even) (Test 3)', () => {
+    const result = calculateStateTaxes(
+      withWages(roundingRuleSet({ currencyMode: 'HALF_EVEN' }), '10.125'),
+      {},
+    );
+    expect(result.employee.incomeTaxWithheld.amount).toBe('10.12');
+  });
+
+  it('DOWN truncates 10.129 toward zero to 10.12 (Test 4)', () => {
+    const result = calculateStateTaxes(
+      withWages(roundingRuleSet({ currencyMode: 'DOWN' }), '10.129'),
+      {},
+    );
+    expect(result.employee.incomeTaxWithheld.amount).toBe('10.12');
+  });
+
+  it('UP rounds 10.121 away from zero to 10.13 (Test 5)', () => {
+    const result = calculateStateTaxes(
+      withWages(roundingRuleSet({ currencyMode: 'UP' }), '10.121'),
+      {},
+    );
+    expect(result.employee.incomeTaxWithheld.amount).toBe('10.13');
+  });
+
+  it.each([
+    { currencyScale: 0, wages: '7.5', expected: '8' },
+    { currencyScale: 2, wages: '7.005', expected: '7.01' },
+    { currencyScale: 6, wages: '7.0000005', expected: '7.000001' },
+  ])(
+    'currencyScale $currencyScale rounds $wages to $expected under HALF_UP (Test 6)',
+    ({ currencyScale, wages, expected }) => {
+      const result = calculateStateTaxes(
+        withWages(roundingRuleSet({ currencyScale, currencyMode: 'HALF_UP' }), wages),
+        {},
+      );
+      expect(result.employee.incomeTaxWithheld.amount).toBe(expected);
+    },
+  );
+});
+
+describe('income tax withholding — STEP_LEVEL rounding', () => {
+  it('reports METHOD_NOT_IMPLEMENTED, never a fabricated rounded result (Test 7)', () => {
+    const result = calculateStateTaxes(
+      withWages(roundingRuleSet({ appliedAt: 'STEP_LEVEL' }), '1000'),
+      {},
+    );
+    expect(result.employee.incomeTaxWithheld.amount).toBeNull();
+    expect(result.employee.incomeTaxWithheld.problem?.reason).toBe('METHOD_NOT_IMPLEMENTED');
+  });
+});
+
+describe('income tax withholding — rounding policy failure semantics', () => {
+  it('missing policy fails RULE_MISSING, with no roundingPolicyId, disclosure, or provenance (Test 8)', () => {
+    const ruleSet = buildRuleSet(formulaEntries());
+    const result = calculateStateTaxes(contextWith({ workRuleSet: ruleSet }), {});
+
+    expect(result.employee.incomeTaxWithheld.amount).toBeNull();
+    expect(result.employee.incomeTaxWithheld.problem?.reason).toBe('RULE_MISSING');
+    expect(result.methodology.roundingPolicyId).toBeNull();
+    expect(result.disclosures).toEqual([]);
+    expect(result.employee.incomeTaxWithheld.rules).toEqual([]);
+  });
+
+  it('invalid policy detail fails RULE_DETAIL_INVALID, with no roundingPolicyId, disclosure, or provenance (Test 9)', () => {
+    const ruleSet = buildRuleSet({
+      ...formulaEntries(),
+      [StateRuleKey.WITHHOLDING_ROUNDING_POLICY]: availableEntry(
+        StateRuleKey.WITHHOLDING_ROUNDING_POLICY,
+        // Missing every required field but `shape` — fails schema validation.
+        { shape: 'ROUNDING_POLICY' },
+      ),
+    });
+    const result = calculateStateTaxes(contextWith({ workRuleSet: ruleSet }), {});
+
+    expect(result.employee.incomeTaxWithheld.amount).toBeNull();
+    expect(result.employee.incomeTaxWithheld.problem?.reason).toBe('RULE_DETAIL_INVALID');
+    expect(result.methodology.roundingPolicyId).toBeNull();
+    expect(result.disclosures).toEqual([]);
+    expect(result.employee.incomeTaxWithheld.rules).toEqual([]);
+  });
+
+  it('unverified policy fails RULE_UNVERIFIED, with no roundingPolicyId, disclosure, or provenance (Test 10)', () => {
+    const ruleSet = buildRuleSet({
+      ...formulaEntries(),
+      [StateRuleKey.WITHHOLDING_ROUNDING_POLICY]: availableEntry(
+        StateRuleKey.WITHHOLDING_ROUNDING_POLICY,
+        roundingPolicyDetail(),
+        { verificationStatus: 'PENDING' },
+      ),
+    });
+    const result = calculateStateTaxes(contextWith({ workRuleSet: ruleSet }), {});
+
+    expect(result.employee.incomeTaxWithheld.amount).toBeNull();
+    expect(result.employee.incomeTaxWithheld.problem?.reason).toBe('RULE_UNVERIFIED');
+    expect(result.methodology.roundingPolicyId).toBeNull();
+    expect(result.disclosures).toEqual([]);
+    expect(result.employee.incomeTaxWithheld.rules).toEqual([]);
+  });
+});
+
+describe('income tax withholding — rounding policy metadata and disclosure', () => {
+  it('roundingPolicyId reflects the resolved policy on success (Test 11)', () => {
+    const result = calculateStateTaxes(contextWith({ workRuleSet: formulaRuleSet() }), {});
+    expect(result.methodology.roundingPolicyId).toBe(ROUNDING_POLICY_ID);
+  });
+
+  it('emits exactly one deterministic ROUNDING_POLICY disclosure on success (Test 12)', () => {
+    const result = calculateStateTaxes(contextWith({ workRuleSet: formulaRuleSet() }), {});
+    expect(result.disclosures).toHaveLength(1);
+    expect(result.disclosures[0]?.code).toBe('ROUNDING_POLICY');
+    expect(result.disclosures[0]?.message).toBe(
+      `Rounding policy ${ROUNDING_POLICY_ID}: currency scale 2, mode HALF_UP, applied at TAX_LEVEL.`,
+    );
+  });
+
+  it('the rounding policy reference never appears in StateAmount.rules (Test 13)', () => {
+    const result = calculateStateTaxes(contextWith({ workRuleSet: formulaRuleSet() }), {});
+    const ruleKeys = result.employee.incomeTaxWithheld.rules.map((r) => r.ruleKey);
+    expect(ruleKeys).not.toContain(StateRuleKey.WITHHOLDING_ROUNDING_POLICY);
+  });
+
+  it('roundingPolicyId and the disclosure survive a downstream withholding failure (Test 14)', () => {
+    // WITHHOLDING_METHOD is deliberately absent, so incomeTaxWithheld itself
+    // fails RULE_MISSING well before rounding is ever reached — but the
+    // policy read happens independently, at the top of calculateStateTaxes(),
+    // so its own success is unaffected.
+    const ruleSet = buildRuleSet({
+      [StateRuleKey.TAXABILITY_PROFILE]: availableEntry(
+        StateRuleKey.TAXABILITY_PROFILE,
+        profileSet(),
+      ),
+      [StateRuleKey.WITHHOLDING_ROUNDING_POLICY]: availableEntry(
+        StateRuleKey.WITHHOLDING_ROUNDING_POLICY,
+        roundingPolicyDetail(),
+      ),
+    });
+    const result = calculateStateTaxes(contextWith({ workRuleSet: ruleSet }), {});
+
+    expect(result.employee.incomeTaxWithheld.amount).toBeNull();
+    expect(result.employee.incomeTaxWithheld.problem?.reason).toBe('RULE_MISSING');
+    expect(result.methodology.roundingPolicyId).toBe(ROUNDING_POLICY_ID);
+    expect(result.disclosures).toHaveLength(1);
+    expect(result.disclosures[0]?.code).toBe('ROUNDING_POLICY');
   });
 });

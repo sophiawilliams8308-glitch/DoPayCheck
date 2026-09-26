@@ -1,4 +1,4 @@
-import { money, toStorageString } from '@/lib/core/money';
+import { money, round, toStorageString, RoundingMode } from '@/lib/core/money';
 import { combineStatuses } from '@/lib/calculator/types/status';
 import type { RuleReference } from '@/lib/calculator/types/rules';
 
@@ -11,12 +11,17 @@ import { readWithholdingMethod } from './rules/withholdingMethod';
 import { resolveWithholdingMethodology } from './rules/withholdingMethodology';
 import { readWithholdingFormula } from './rules/withholdingFormula';
 import { runStateWithholdingFormula } from './rules/withholdingFormulaInterpreter';
+import {
+  readWithholdingRoundingPolicy,
+  type StateRoundingPolicy,
+} from './rules/withholdingRoundingPolicy';
 import { calculatePfmlEmployee, calculatePfmlEmployer } from './pfml/calculatePfml';
 import { calculateSdiEmployee, calculateSdiEmployer } from './sdi/calculateSdi';
 import { calculateSutaEmployee, calculateSutaEmployer } from './suta/calculateSuta';
 import type {
   StateAmount,
   StateComponentResult,
+  StateDisclosure,
   StateEmployeeResult,
   StateEmployerResult,
   StateTaxResult,
@@ -55,6 +60,23 @@ import { deriveResolvedStateWageBuckets } from './wages/deriveResolvedStateWageB
  * bypassed. `supplementalWithheld` is deliberately UNCHANGED — still
  * `programAmount()`'s fabricated-`METHOD_NOT_IMPLEMENTED` shell, since
  * supplemental withholding was not part of this slice's scope.
+ *
+ * State income-tax withholding ROUNDING (Slice 28, per the Slice 26/27
+ * locked contract) is applied at the same `incomeTaxWithheldAmount()`
+ * boundary, strictly AFTER the formula succeeds: `WITHHOLDING_ROUNDING_POLICY`
+ * is read once in `calculateStateTaxes()` (alongside the existing
+ * `WITHHOLDING_METHOD` read) via the existing, unmodified
+ * `readWithholdingRoundingPolicy()`; `appliedAt === 'TAX_LEVEL'` rounds the
+ * formula's final amount via the canonical `round()` (`lib/core/money.ts`,
+ * `policy.currencyScale`/`policy.currencyMode` — never `intermediateScale`);
+ * `appliedAt === 'STEP_LEVEL'` reports `METHOD_NOT_IMPLEMENTED` (this engine
+ * build has no step-level rounding mechanism), mirroring
+ * `TABLE_SELECTION_ONLY`'s own identical situation. The formula interpreter
+ * itself is untouched — `ROUND` remains excluded from it (Task 4O-6R31).
+ * `methodology.roundingPolicyId` and `StateTaxResult.disclosures` reflect
+ * ONLY whether the policy itself was successfully read — independent of
+ * whether the income-tax withholding calculation as a whole succeeds — and
+ * the policy's own `RuleReference` is never merged into `StateAmount.rules`.
  *
  * This module does not resolve rules, does not resolve taxability, and does
  * not derive wage buckets itself — those stay exactly where they already
@@ -381,6 +403,44 @@ function ruleReference(
 }
 
 /**
+ * Human-readable label for a `RoundingMode` value — display formatting only,
+ * never a rounding decision itself. `StateRoundingPolicy.currencyMode` is
+ * already converted from the schema's own string enum to this generic,
+ * numeric `RoundingMode` (`withholdingRoundingPolicy.ts`'s own `MODE_MAP`),
+ * so the disclosure message reverses that conversion for a person to read —
+ * it does not invent a value the policy itself does not carry.
+ */
+function currencyModeLabel(mode: RoundingMode): string {
+  switch (mode) {
+    case RoundingMode.HALF_UP:
+      return 'HALF_UP';
+    case RoundingMode.HALF_EVEN:
+      return 'HALF_EVEN';
+    case RoundingMode.DOWN:
+      return 'DOWN';
+    case RoundingMode.UP:
+      return 'UP';
+    default:
+      return String(mode);
+  }
+}
+
+/**
+ * State-local disclosure message for a successfully-resolved rounding
+ * policy — deliberately NOT `lib/tax/federal/rounding/federal-rounding.ts`'s
+ * `roundingDisclosure()` (state code does not import federal modules), and
+ * deliberately narrower: it states only the facts `StateRoundingPolicy`
+ * itself carries (policy id, currency scale, currency mode, `appliedAt`),
+ * never a jurisdiction-specific claim this repository has no source for.
+ */
+function roundingDisclosureMessage(policy: StateRoundingPolicy): string {
+  return (
+    `Rounding policy ${policy.policyId}: currency scale ${String(policy.currencyScale)}, ` +
+    `mode ${currencyModeLabel(policy.currencyMode)}, applied at ${policy.appliedAt}.`
+  );
+}
+
+/**
  * State income-tax withholding — DM-03 Slice 24. The `stateIncomeTaxWages`
  * bucket feeds the existing methodology dispatcher (`resolveWithholdingMethodology()`,
  * Slice 17) and, for the `FORMULA` path only, the existing formula
@@ -433,6 +493,7 @@ function incomeTaxWithheldAmount(
   context: StateCalculationContext,
   buckets: Readonly<Record<StateBucket, StateAmount>>,
   methodResult: ReturnType<typeof readWithholdingMethod>,
+  policyResult: ReturnType<typeof readWithholdingRoundingPolicy>,
 ): StateAmount {
   const bucket = buckets[PROGRAM_BUCKET.INCOME_TAX_WITHHOLDING];
   const ruleSet = context.workRuleSet;
@@ -523,12 +584,52 @@ function incomeTaxWithheldAmount(
     };
   }
 
+  // Rounding (Slice 28, per the Slice 26/27 locked contract) is applied
+  // here, strictly after the formula's own arithmetic has already succeeded.
+  // `policyResult` is read once, in `calculateStateTaxes()`, and shared with
+  // `methodology.roundingPolicyId`/`StateTaxResult.disclosures` exactly as
+  // `methodResult` already is for `methodology.withholdingMethod` — a policy
+  // failure here never carries partial rule provenance, and never returns
+  // the unrounded amount.
+  if (!policyResult.ok) {
+    return {
+      code,
+      label,
+      amount: null,
+      status: statusForStateReason(policyResult.problem.reason),
+      problem: policyResult.problem,
+      rules: [],
+    };
+  }
+
+  if (policyResult.value.appliedAt === 'STEP_LEVEL') {
+    const problem = stateUnavailable(
+      StateReason.METHOD_NOT_IMPLEMENTED,
+      `${label} cannot be rounded — this engine build has no STEP_LEVEL rounding mechanism; ` +
+        'only TAX_LEVEL rounding is implemented',
+    );
+    return {
+      code,
+      label,
+      amount: null,
+      status: statusForStateReason(problem.reason),
+      problem,
+      rules: [],
+    };
+  }
+
+  const roundedAmount = round(
+    formulaResult.value.amount,
+    policyResult.value.currencyScale,
+    policyResult.value.currencyMode,
+  );
+
   const formulaContainerReference = ruleReference(ruleSet, StateRuleKey.WITHHOLDING_FORMULA);
 
   return {
     code,
     label,
-    amount: toStorageString(formulaResult.value.amount),
+    amount: toStorageString(roundedAmount),
     status: 'COMPLETE',
     rules: mergeReferences([
       bucket.rules,
@@ -613,12 +714,21 @@ export function calculateStateTaxes(
   // "do not call the resolver multiple times unnecessarily" instruction.
   const methodResult = readWithholdingMethod(context.workRuleSet);
 
+  // Read once — shared by `methodology.roundingPolicyId`/`disclosures` below
+  // and by `incomeTaxWithheldAmount()`'s own rounding step, mirroring
+  // `methodResult`'s identical pattern (DM-03 Slice 28, per Slice 27's
+  // architectural placement finding). `roundingPolicyId`/the disclosure
+  // reflect only whether this read succeeded — independent of whether
+  // income-tax withholding itself goes on to succeed (Slice 26/27 §4/§5/§11).
+  const policyResult = readWithholdingRoundingPolicy(context.workRuleSet);
+
   const incomeTaxWithheld = incomeTaxWithheldAmount(
     'STATE_INCOME_TAX_WITHHELD',
     'State income tax withheld',
     context,
     buckets,
     methodResult,
+    policyResult,
   );
   const supplementalWithheld = programAmount(
     'STATE_SUPPLEMENTAL_WITHHELD',
@@ -768,6 +878,10 @@ export function calculateStateTaxes(
 
   const issues = [...new Set(bucketProblems(buckets))];
 
+  const disclosures: readonly StateDisclosure[] = policyResult.ok
+    ? [{ code: 'ROUNDING_POLICY', message: roundingDisclosureMessage(policyResult.value) }]
+    : [];
+
   return {
     status,
     engineVersion: STATE_ENGINE_VERSION,
@@ -782,16 +896,18 @@ export function calculateStateTaxes(
       // methodology dispatcher or formula execution themselves succeed.
       // `null` only when WITHHOLDING_METHOD itself could not be read.
       withholdingMethod: methodResult.ok ? methodResult.value.methodName : null,
-      // No repository contract exists to populate these yet (DM-03 Slice
-      // 19: rounding application boundary unresolved; supplemental
-      // withholding untouched by any slice) — left null rather than guessed.
+      // Supplemental withholding remains untouched by any slice — left null
+      // rather than guessed. `roundingPolicyId` reflects the DM-03 Slice 28
+      // rounding-policy read below: populated on successful resolution,
+      // independent of whether income-tax withholding itself succeeds
+      // (Slice 26/27 §4/§11).
       supplementalTreatment: null,
-      roundingPolicyId: null,
+      roundingPolicyId: policyResult.ok ? policyResult.value.policyId : null,
     },
     buckets: toWageBuckets(buckets),
     employee,
     employer,
-    disclosures: [],
+    disclosures,
     ruleReferences: bucketReferences(buckets),
     sourceIds: [...new Set(bucketReferences(buckets).flatMap((reference) => reference.sourceIds))],
     issues,
