@@ -867,15 +867,55 @@ describe('DM-03 Slice 17 scope — withholding methodology dispatcher, classific
     expect(source).not.toMatch(/\bsubtract\(|\bsum\(|\bmultiply\(|\bmoney\(/);
   });
 
-  it('is not wired into calculateStateTaxes() or index.ts', () => {
-    // Slice 17's explicit boundary: contract resolution only, no wiring.
-    const source = code(readFileSync(join(STATE, 'index.ts'), 'utf8'));
-    expect(source).not.toMatch(/resolveWithholdingMethodology|withholdingMethodology/);
-  });
-
   it('does not access a ResolvedStateRuleSet directly — classification takes an already-read detail', () => {
     const source = code(readFileSync(join(STATE, 'rules/withholdingMethodology.ts'), 'utf8'));
     expect(source).not.toMatch(/ResolvedStateRuleSet|stateRule\(/);
+  });
+});
+
+describe('DM-03 Slice 24 scope — index.ts wiring uses the dispatcher, never bypasses it', () => {
+  // Slice 17's original "not wired into index.ts at all" guard is
+  // superseded here: Slice 24 is the explicitly authorized wiring slice.
+  // What must still hold is that index.ts consumes the existing dispatcher
+  // rather than re-deciding methodology itself.
+  it('calls resolveWithholdingMethodology() rather than switching on .structure directly', () => {
+    const source = code(readFileSync(join(STATE, 'index.ts'), 'utf8'));
+    expect(source).toMatch(/resolveWithholdingMethodology\(/);
+    expect(source).not.toMatch(/\.structure\s*===|switch\s*\(\s*\w+\.structure\s*\)/);
+  });
+
+  it('does not implement TABLE post-selection arithmetic in index.ts', () => {
+    const source = code(readFileSync(join(STATE, 'index.ts'), 'utf8'));
+    expect(source).not.toMatch(/selectStateWithholdingTableRow/);
+    expect(source).toMatch(/TABLE_SELECTION_ONLY/);
+    expect(source).toMatch(/METHOD_NOT_IMPLEMENTED/);
+  });
+
+  it('captures the WITHHOLDING_FORMULA container reference at the orchestrator layer, not inside the interpreter', () => {
+    const indexSource = code(readFileSync(join(STATE, 'index.ts'), 'utf8'));
+    expect(indexSource).toMatch(/StateRuleKey\.WITHHOLDING_FORMULA/);
+    // The interpreter's own doc comments, error text, and its pre-existing
+    // `FORMULA_RULE_KEY` constant (used only to label error messages, never
+    // to read a rule) all legitimately mention "WITHHOLDING_FORMULA" — what
+    // must never appear ANYWHERE ELSE is that key passed to `readDetail(`/
+    // `stateRule(` as an actual rule access.
+    const interpreterSource = code(
+      readFileSync(join(STATE, 'rules/withholdingFormulaInterpreter.ts'), 'utf8'),
+    )
+      .split('\n')
+      .filter((line) => !/const FORMULA_RULE_KEY/.test(line))
+      .join('\n');
+    expect(interpreterSource).not.toMatch(/StateRuleKey\.WITHHOLDING_FORMULA/);
+  });
+
+  it('does not modify resolveStatePayPeriodsPerYear() or readDetail()', () => {
+    const payPeriodsSource = code(
+      readFileSync(join(STATE, 'rules/withholdingPayPeriods.ts'), 'utf8'),
+    );
+    expect(payPeriodsSource).toMatch(/export function resolveStatePayPeriodsPerYear/);
+    expect(payPeriodsSource).not.toMatch(/stateRule\(/);
+    const readDetailSource = code(readFileSync(join(STATE, 'rules/read-detail.ts'), 'utf8'));
+    expect(readDetailSource).not.toMatch(/reference:/);
   });
 });
 

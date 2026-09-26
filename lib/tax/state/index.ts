@@ -2,11 +2,15 @@ import { money, toStorageString } from '@/lib/core/money';
 import { combineStatuses } from '@/lib/calculator/types/status';
 import type { RuleReference } from '@/lib/calculator/types/rules';
 
-import type { StateCalculationContext } from './context';
+import { resolveWorkJurisdictionElections, type StateCalculationContext } from './context';
 import { StateReason, statusForStateReason, stateUnavailable } from './errors/stateErrors';
-import { PROGRAM_BUCKET, type StateBucket, type StateProgram } from './ruleKeys';
+import { PROGRAM_BUCKET, StateRuleKey, type StateBucket, type StateProgram } from './ruleKeys';
 import type { TaxabilityResolutionContext } from './rules/resolveTaxability';
-import type { ResolvedStateRuleSet } from './rules/stateRuleSet';
+import { stateRule, type ResolvedStateRuleSet } from './rules/stateRuleSet';
+import { readWithholdingMethod } from './rules/withholdingMethod';
+import { resolveWithholdingMethodology } from './rules/withholdingMethodology';
+import { readWithholdingFormula } from './rules/withholdingFormula';
+import { runStateWithholdingFormula } from './rules/withholdingFormulaInterpreter';
 import { calculatePfmlEmployee, calculatePfmlEmployer } from './pfml/calculatePfml';
 import { calculateSdiEmployee, calculateSdiEmployer } from './sdi/calculateSdi';
 import { calculateSutaEmployee, calculateSutaEmployer } from './suta/calculateSuta';
@@ -23,32 +27,43 @@ import { deriveResolvedStateWageBuckets } from './wages/deriveResolvedStateWageB
 /**
  * State calculation engine — top-level entry point. DM-03 Slice 8; SDI wired
  * in at Slice 10; PFML wired in at Slice 11; SUTA employee side wired in at
- * Slice 12; SUTA employer side wired in at Slice 15.
+ * Slice 12; SUTA employer side wired in at Slice 15; state income-tax
+ * withholding's FORMULA path wired in at Slice 24.
  *
  * ===========================================================================
- * MOSTLY STILL A SHELL — SDI, PFML, AND SUTA (BOTH SIDES) ARE THE REAL
- * CALCULATIONS.
+ * SDI, PFML, SUTA (BOTH SIDES), AND INCOME-TAX WITHHOLDING'S FORMULA PATH ARE
+ * REAL CALCULATIONS. SUPPLEMENTAL WITHHOLDING REMAINS A SHELL.
  *
  * `calculateStateTaxes()` proves the `StateCalculationContext -> StateTaxResult`
  * shape end to end using resolver-driven state wage buckets
- * (`deriveResolvedStateWageBuckets()`, Slice 7). State income tax
- * withholding still reports every actual tax AMOUNT as explicitly
- * not-yet-implemented, via `StateReason.METHOD_NOT_IMPLEMENTED` (Slice 8).
- * SDI (`sdi/calculateSdi.ts`, Slice 10), PFML (`pfml/calculatePfml.ts`,
- * Slice 11) and SUTA (`suta/calculateSuta.ts`, Slices 12 + 15) are real,
- * resolver-driven calculations on both sides — `sdiAmount()`/`pfmlAmount()`/
+ * (`deriveResolvedStateWageBuckets()`, Slice 7). SDI (`sdi/calculateSdi.ts`,
+ * Slice 10), PFML (`pfml/calculatePfml.ts`, Slice 11) and SUTA
+ * (`suta/calculateSuta.ts`, Slices 12 + 15) are real, resolver-driven
+ * calculations on both sides — `sdiAmount()`/`pfmlAmount()`/
  * (`sutaEmployeeAmount()` + `sutaEmployerAmount()`) below wire them in for
  * exactly their own employee/employer components. SUTA's employer side
  * reads its rate from `context.employer.sutaRate` (the locked Slice 14
  * contract), never from `SUTA_EMPLOYER_RATE`/`SUTA_NEW_EMPLOYER_RATE`.
  *
+ * State income-tax withholding (`incomeTaxWithheldAmount()` below, Slice 24)
+ * dispatches through the existing `resolveWithholdingMethodology()` (Slice
+ * 17): the `FORMULA` path runs the existing `runStateWithholdingFormula()`
+ * (Slice 23) against the `stateIncomeTaxWages` bucket; `TABLE_SELECTION_ONLY`
+ * still reports `METHOD_NOT_IMPLEMENTED` (no approved post-selection
+ * arithmetic contract exists — Slice 20/21); `NONE`/`FLAT`/`PROGRESSIVE`/
+ * `HYBRID` still report the dispatcher's own `SCENARIO_UNSUPPORTED`, never
+ * bypassed. `supplementalWithheld` is deliberately UNCHANGED — still
+ * `programAmount()`'s fabricated-`METHOD_NOT_IMPLEMENTED` shell, since
+ * supplemental withholding was not part of this slice's scope.
+ *
  * This module does not resolve rules, does not resolve taxability, and does
  * not derive wage buckets itself — those stay exactly where they already
  * live (`resolveTaxability()`, `deriveResolvedStateWageBuckets()`). It only
- * composes their already-correct outputs (and, for SDI/PFML/SUTA, their own
- * calculation modules' output) into the committed `StateTaxResult` shape,
- * and is not called from `calculatePaycheck()` or wired into `options.state`
- * anywhere — that remains a later, separate integration slice.
+ * composes their already-correct outputs (and, for SDI/PFML/SUTA/income-tax
+ * withholding, their own calculation modules' output) into the committed
+ * `StateTaxResult` shape, and is not called from `calculatePaycheck()` or
+ * wired into `options.state` anywhere — that remains a later, separate
+ * integration slice.
  * ===========================================================================
  */
 
@@ -348,6 +363,181 @@ function sutaEmployerAmount(
   };
 }
 
+/**
+ * Fetches a rule's `RuleReference` via a second, independent, in-memory
+ * `stateRule()` call — never via `readDetail()`, whose own `ResolvedDetail`
+ * return type carries no reference (DM-03 Slice 23/24). The exact,
+ * already-established pattern `calculateSuta.ts`/`calculateSdi.ts`'s own
+ * `ruleReference()` helper and `withholdingFormulaInterpreter.ts`'s own
+ * identically-named helper already use, reused here rather than reinvented
+ * — `readDetail()`/`stateRule()` are never modified.
+ */
+function ruleReference(
+  ruleSet: ResolvedStateRuleSet,
+  key: StateRuleKey,
+): RuleReference | undefined {
+  const entry = stateRule(ruleSet, key);
+  return entry.available ? entry.rule.reference : undefined;
+}
+
+/**
+ * State income-tax withholding — DM-03 Slice 24. The `stateIncomeTaxWages`
+ * bucket feeds the existing methodology dispatcher (`resolveWithholdingMethodology()`,
+ * Slice 17) and, for the `FORMULA` path only, the existing formula
+ * interpreter (`runStateWithholdingFormula()`, Slice 23) instead of the
+ * fabricated `METHOD_NOT_IMPLEMENTED` `programAmount()` still reports.
+ *
+ * ===========================================================================
+ * WHAT THIS FUNCTION DOES NOT DO.
+ *
+ * It does not resolve `WITHHOLDING_METHOD` itself beyond the one, already-read
+ * `methodResult` the caller supplies (read once, in `calculateStateTaxes()`,
+ * so `methodology.withholdingMethod` and this function's own dispatch share
+ * the identical read rather than reading the rule twice). It does not
+ * duplicate `resolveWithholdingMethodology()`'s own classification logic —
+ * every `structure` value is handled exactly as that resolver already
+ * decides, never re-decided here via a second switch on `.structure`. It
+ * does not implement `TABLE` post-selection arithmetic (`TABLE_SELECTION_ONLY`
+ * remains `METHOD_NOT_IMPLEMENTED` — no approved arithmetic contract exists
+ * anywhere in this repository, per DM-03 Slice 20/21's own discovery). It
+ * does not implement `ROUND`, rounding-policy application, reciprocity, or
+ * supplemental withholding. It does not modify `readDetail()`,
+ * `resolveStatePayPeriodsPerYear()`, or `runStateWithholdingFormula()` itself
+ * — Slice 23 already established the interpreter's own provenance contract.
+ * ===========================================================================
+ *
+ * FORMULA CONTAINER PROVENANCE (DM-03 Slice 22 Question A, Slice 23): the
+ * interpreter never reads `WITHHOLDING_FORMULA` itself — it receives the
+ * already-resolved detail as a parameter — so that rule's own `RuleReference`
+ * is captured HERE, at this orchestrator layer, via the same `ruleReference()`
+ * pattern every other rule reference in this file already uses, and merged
+ * in alongside the bucket's and the formula's own operand references. It is
+ * never added back into the interpreter.
+ *
+ * If the bucket itself is unavailable, its `status`/`problem` propagate
+ * VERBATIM, identical to every other `xAmount()` function in this file. If
+ * `WITHHOLDING_METHOD` failed to read, or `resolveWithholdingMethodology()`
+ * reports `SCENARIO_UNSUPPORTED` (`NONE`/`FLAT`/`PROGRESSIVE`/`HYBRID`), or
+ * `WITHHOLDING_FORMULA` fails to read, or formula execution itself fails
+ * (missing/invalid/unverified rule, `null` filing status, an unsupported
+ * operation such as `ROUND`, pay-period resolution failure, or any other
+ * existing `Read` failure), that failure's own `StateUnavailable` is used
+ * as-is — never replaced, never reinterpreted, and never carrying partial
+ * provenance (`rules: []` on every failure branch, exactly like every other
+ * `xAmount()` function; `Read<T>`'s failure branch itself carries no value
+ * to leak from in the first place).
+ */
+function incomeTaxWithheldAmount(
+  code: string,
+  label: string,
+  context: StateCalculationContext,
+  buckets: Readonly<Record<StateBucket, StateAmount>>,
+  methodResult: ReturnType<typeof readWithholdingMethod>,
+): StateAmount {
+  const bucket = buckets[PROGRAM_BUCKET.INCOME_TAX_WITHHOLDING];
+  const ruleSet = context.workRuleSet;
+
+  if (bucket.amount === null) {
+    return {
+      code,
+      label,
+      amount: null,
+      status: bucket.status,
+      ...(bucket.problem === undefined ? {} : { problem: bucket.problem }),
+      rules: [],
+    };
+  }
+
+  if (!methodResult.ok) {
+    return {
+      code,
+      label,
+      amount: null,
+      status: statusForStateReason(methodResult.problem.reason),
+      problem: methodResult.problem,
+      rules: [],
+    };
+  }
+
+  const methodology = resolveWithholdingMethodology(methodResult.value);
+  if (!methodology.ok) {
+    return {
+      code,
+      label,
+      amount: null,
+      status: statusForStateReason(methodology.problem.reason),
+      problem: methodology.problem,
+      rules: [],
+    };
+  }
+
+  if (methodology.value.kind === 'TABLE_SELECTION_ONLY') {
+    const problem = stateUnavailable(
+      StateReason.METHOD_NOT_IMPLEMENTED,
+      `${label} is not yet implemented for the TABLE withholding methodology — row selection ` +
+        'exists, but no approved post-selection arithmetic contract exists in this repository',
+    );
+    return {
+      code,
+      label,
+      amount: null,
+      status: statusForStateReason(problem.reason),
+      problem,
+      rules: [],
+    };
+  }
+
+  const formulaDetail = readWithholdingFormula(ruleSet);
+  if (!formulaDetail.ok) {
+    return {
+      code,
+      label,
+      amount: null,
+      status: statusForStateReason(formulaDetail.problem.reason),
+      problem: formulaDetail.problem,
+      rules: [],
+    };
+  }
+
+  const filingStatus = context.elections[ruleSet.jurisdictionCode]?.filingStatus ?? null;
+  const resolvedElections = resolveWorkJurisdictionElections(context);
+
+  const formulaResult = runStateWithholdingFormula(
+    formulaDetail.value,
+    ruleSet,
+    money(bucket.amount),
+    filingStatus,
+    context.allowanceCounts,
+    resolvedElections,
+    context.payFrequency,
+  );
+
+  if (!formulaResult.ok) {
+    return {
+      code,
+      label,
+      amount: null,
+      status: statusForStateReason(formulaResult.problem.reason),
+      problem: formulaResult.problem,
+      rules: [],
+    };
+  }
+
+  const formulaContainerReference = ruleReference(ruleSet, StateRuleKey.WITHHOLDING_FORMULA);
+
+  return {
+    code,
+    label,
+    amount: toStorageString(formulaResult.value.amount),
+    status: 'COMPLETE',
+    rules: mergeReferences([
+      bucket.rules,
+      formulaContainerReference === undefined ? [] : [formulaContainerReference],
+      formulaResult.value.rules,
+    ]),
+  };
+}
+
 /** A total across several `StateAmount`s that are all unavailable in this
  * shell — folds status via the existing `combineStatuses()`, and carries the
  * first defined component problem forward (mirroring the "first problem
@@ -418,11 +608,17 @@ export function calculateStateTaxes(
 
   const workJurisdictionCode = context.workRuleSet.jurisdictionCode;
 
-  const incomeTaxWithheld = programAmount(
+  // Read once — shared by `methodology.withholdingMethod` below and by
+  // `incomeTaxWithheldAmount()`'s own dispatch, per DM-03 Slice 24's
+  // "do not call the resolver multiple times unnecessarily" instruction.
+  const methodResult = readWithholdingMethod(context.workRuleSet);
+
+  const incomeTaxWithheld = incomeTaxWithheldAmount(
     'STATE_INCOME_TAX_WITHHELD',
     'State income tax withheld',
-    'INCOME_TAX_WITHHOLDING',
+    context,
     buckets,
+    methodResult,
   );
   const supplementalWithheld = programAmount(
     'STATE_SUPPLEMENTAL_WITHHELD',
@@ -581,7 +777,14 @@ export function calculateStateTaxes(
     residenceJurisdictionCode: context.residenceJurisdictionCode,
     residencyStatus: context.residencyStatus,
     methodology: {
-      withholdingMethod: null,
+      // The jurisdiction's own declared method name (WITHHOLDING_METHOD.methodName)
+      // — a descriptive disclosure fact, independent of whether the
+      // methodology dispatcher or formula execution themselves succeed.
+      // `null` only when WITHHOLDING_METHOD itself could not be read.
+      withholdingMethod: methodResult.ok ? methodResult.value.methodName : null,
+      // No repository contract exists to populate these yet (DM-03 Slice
+      // 19: rounding application boundary unresolved; supplemental
+      // withholding untouched by any slice) — left null rather than guessed.
       supplementalTreatment: null,
       roundingPolicyId: null,
     },

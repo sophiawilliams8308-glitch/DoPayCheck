@@ -178,16 +178,23 @@ describe('resolver-backed wage buckets are populated', () => {
 });
 
 describe('employee tax amount fields are explicitly unavailable', () => {
-  it('every non-SDI/PFML/SUTA employee StateAmount is null with METHOD_NOT_IMPLEMENTED when its bucket is available', () => {
+  it('supplementalWithheld is null with METHOD_NOT_IMPLEMENTED when its bucket is available (Slice 24: income-tax withholding no longer shares this shell — see its own dedicated test below)', () => {
     const result = calculateStateTaxes(context({ workRuleSet: ruleSetFor(profileSet([])) }), {});
-    for (const amount of [
-      result.employee.incomeTaxWithheld,
-      result.employee.supplementalWithheld,
-    ]) {
-      expect(amount.amount).toBeNull();
-      expect(amount.problem?.reason).toBe('METHOD_NOT_IMPLEMENTED');
-    }
+    expect(result.employee.supplementalWithheld.amount).toBeNull();
+    expect(result.employee.supplementalWithheld.problem?.reason).toBe('METHOD_NOT_IMPLEMENTED');
   });
+
+  it(
+    'income tax withholding is null, never fabricated, but for its OWN calculation reason ' +
+      '(Slice 24: a real calculation is now attempted via WITHHOLDING_METHOD dispatch, not a ' +
+      'fabricated METHOD_NOT_IMPLEMENTED) — this fixture supplies no WITHHOLDING_METHOD rule at ' +
+      'all, so it fails RULE_MISSING',
+    () => {
+      const result = calculateStateTaxes(context({ workRuleSet: ruleSetFor(profileSet([])) }), {});
+      expect(result.employee.incomeTaxWithheld.amount).toBeNull();
+      expect(result.employee.incomeTaxWithheld.problem?.reason).toBe('RULE_MISSING');
+    },
+  );
 
   it(
     'SDI is null, never fabricated, but for its OWN calculation reason (Slice 10: a real ' +
