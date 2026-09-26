@@ -11,6 +11,8 @@ import {
   type Money,
 } from '@/lib/core/money';
 
+import type { RuleReference } from '@/lib/calculator/types/rules';
+
 import { StateReason, stateUnavailable, type StateUnavailable } from '../errors/stateErrors';
 import { StateRuleKey } from '../ruleKeys';
 import type { StateElectionValue } from '../context';
@@ -32,13 +34,35 @@ import {
   requireForFilingStatus,
   type Read,
 } from './read-detail';
-import type { ResolvedStateRuleSet } from './stateRuleSet';
+import { stateRule, type ResolvedStateRuleSet } from './stateRuleSet';
 import { resolveStatePayPeriodsPerYear } from './withholdingPayPeriods';
 
 /**
  * State withholding formula interpreter — Task 4O-3A, extended by Tasks
  * 4O-5, 4O-6R6, 4O-6R12, 4O-6R17, 4O-6R23, 4O-6R26, 4O-6R33, and 4O-6R45.
+ * Provenance-carrying since DM-03 Slice 23 (contract locked at Slice 22).
  *
+ * ===========================================================================
+ * SUCCESS RESULT CARRIES PROVENANCE — `{ amount: Money; rules:
+ * readonly RuleReference[] }`, not a bare `Money` (DM-03 Slice 23).
+ *
+ * Mirrors the established `SdiContribution`/`PfmlContribution`/
+ * `SutaContribution` result shape. Each operation reads at most one distinct
+ * rule per invocation; its reference is captured via a second, independent
+ * `stateRule()` call (this module's own `ruleReference()` helper — the same
+ * pattern `calculateSuta.ts`/`calculateSdi.ts` already use), never by
+ * modifying `readDetail()` or `resolveStatePayPeriodsPerYear()`, neither of
+ * which is touched. References accumulate across successful steps in
+ * first-occurrence execution order, deduplicated by `ruleId@version` —
+ * identical to `mergeReferences()`'s existing convention. `WITHHOLDING_FORMULA`'s
+ * own reference is NEVER included here (Slice 22, Question A): this
+ * interpreter receives `detail` already resolved and never reads that rule
+ * key itself, so that reference belongs to whichever future caller reads it
+ * and merges it in externally, exactly like `bucket.rules` already is at the
+ * `index.ts` aggregation boundary. On ANY failure, no partial provenance is
+ * ever returned — `Read<T>`'s failure branch carries no value at all,
+ * matching the established SDI/PFML/SUTA convention of `rules: []` on every
+ * failure path.
  * ===========================================================================
  * IMPLEMENTS ELEVEN OPERATIONS: THE THREE TASK 4O-2 CONTRACT-LOCKED ONES
  * (`SUBTRACT_STANDARD_DEDUCTION`, `FLOOR_AT_ZERO`, `APPLY_BRACKETS`), PLUS
@@ -123,6 +147,35 @@ function conflict(detail: string): StateUnavailable {
 }
 
 /**
+ * One step's successful result — DM-03 Slice 23. The running value plus the
+ * `RuleReference` of the single rule that step read, or `undefined` when the
+ * step reads no rule (`FLOOR_AT_ZERO`). Every operation in this module reads
+ * at most one distinct rule key per invocation, so a single optional
+ * reference is sufficient — never a list at this level.
+ */
+interface FormulaStepResult {
+  readonly value: Money;
+  readonly reference: RuleReference | undefined;
+}
+
+/**
+ * Fetches a rule's `RuleReference` via a second, independent, in-memory
+ * `stateRule()` call — never via `readDetail()`, whose own `ResolvedDetail`
+ * return type carries no reference. This is the exact, already-established
+ * pattern `lib/tax/state/suta/calculateSuta.ts`'s own `ruleReference()`
+ * helper uses (and `calculateSdi.ts`'s identically-named helper), reused
+ * here rather than reinvented — `readDetail()` and `stateRule()` are never
+ * modified.
+ */
+function ruleReference(
+  ruleSet: ResolvedStateRuleSet,
+  key: StateRuleKey,
+): RuleReference | undefined {
+  const entry = stateRule(ruleSet, key);
+  return entry.available ? entry.rule.reference : undefined;
+}
+
+/**
  * `SUBTRACT_STANDARD_DEDUCTION` — contract-locked null `operandRef`.
  *
  * Resolves `WITHHOLDING_STANDARD_DEDUCTION` and selects its filing-status row
@@ -139,7 +192,7 @@ function subtractStandardDeduction(
   filingStatus: string | null,
   operandRef: string | null,
   runningValue: Money,
-): Read<Money> {
+): Read<FormulaStepResult> {
   if (operandRef !== null) {
     return readFail(
       invalidDetail(
@@ -175,7 +228,10 @@ function subtractStandardDeduction(
     return readFail(deduction.problem);
   }
 
-  return readOk(subtract(runningValue, deduction.value));
+  return readOk({
+    value: subtract(runningValue, deduction.value),
+    reference: ruleReference(ruleSet, StateRuleKey.WITHHOLDING_STANDARD_DEDUCTION),
+  });
 }
 
 /**
@@ -215,7 +271,7 @@ function subtractExemptions(
   filingStatus: string | null,
   operandRef: string | null,
   runningValue: Money,
-): Read<Money> {
+): Read<FormulaStepResult> {
   if (operandRef !== StateRuleKey.PIT_PERSONAL_EXEMPTION) {
     return readFail(
       invalidDetail(
@@ -252,18 +308,21 @@ function subtractExemptions(
     return readFail(exemption.problem);
   }
 
-  return readOk(subtract(runningValue, exemption.value));
+  return readOk({
+    value: subtract(runningValue, exemption.value),
+    reference: ruleReference(ruleSet, StateRuleKey.PIT_PERSONAL_EXEMPTION),
+  });
 }
 
 /**
  * `FLOOR_AT_ZERO` — contract-locked null `operandRef`. Pure arithmetic on the
  * running value; no rule lookup, no rounding.
  */
-function floorAtZero(operandRef: string | null, runningValue: Money): Read<Money> {
+function floorAtZero(operandRef: string | null, runningValue: Money): Read<FormulaStepResult> {
   if (operandRef !== null) {
     return readFail(invalidDetail('FLOOR_AT_ZERO requires a null operandRef; it takes no operand'));
   }
-  return readOk(max(runningValue, zero()));
+  return readOk({ value: max(runningValue, zero()), reference: undefined });
 }
 
 /**
@@ -285,7 +344,7 @@ function applyBrackets(
   filingStatus: string | null,
   operandRef: string | null,
   runningValue: Money,
-): Read<Money> {
+): Read<FormulaStepResult> {
   if (operandRef === null) {
     return readFail(
       invalidDetail('APPLY_BRACKETS requires a non-null operandRef naming a StateRuleKey'),
@@ -366,7 +425,10 @@ function applyBrackets(
     slices.push(multiply(slice, rate.value));
   }
 
-  return readOk(slices.length === 0 ? zero() : sum(slices));
+  return readOk({
+    value: slices.length === 0 ? zero() : sum(slices),
+    reference: ruleReference(ruleSet, bracketRuleKey),
+  });
 }
 
 /**
@@ -397,7 +459,7 @@ function subtractAmount(
   ruleSet: ResolvedStateRuleSet,
   operandRef: string | null,
   runningValue: Money,
-): Read<Money> {
+): Read<FormulaStepResult> {
   if (operandRef === null) {
     return readFail(
       invalidDetail('SUBTRACT_AMOUNT requires a non-null operandRef naming a StateRuleKey'),
@@ -433,7 +495,10 @@ function subtractAmount(
     return readFail(amount.problem);
   }
 
-  return readOk(subtract(runningValue, amount.value));
+  return readOk({
+    value: subtract(runningValue, amount.value),
+    reference: ruleReference(ruleSet, amountRuleKey),
+  });
 }
 
 /**
@@ -468,7 +533,7 @@ function applyFlatRate(
   ruleSet: ResolvedStateRuleSet,
   operandRef: string | null,
   runningValue: Money,
-): Read<Money> {
+): Read<FormulaStepResult> {
   if (operandRef === null) {
     return readFail(
       invalidDetail('APPLY_FLAT_RATE requires a non-null operandRef naming a StateRuleKey'),
@@ -525,7 +590,10 @@ function applyFlatRate(
     return readFail(rate.problem);
   }
 
-  return readOk(multiply(runningValue, rate.value));
+  return readOk({
+    value: multiply(runningValue, rate.value),
+    reference: ruleReference(ruleSet, rateRuleKey),
+  });
 }
 
 /**
@@ -563,7 +631,7 @@ function applyPercentageOf(
   ruleSet: ResolvedStateRuleSet,
   operandRef: string | null,
   runningValue: Money,
-): Read<Money> {
+): Read<FormulaStepResult> {
   if (operandRef === null) {
     return readFail(
       invalidDetail('APPLY_PERCENTAGE_OF requires a non-null operandRef naming a StateRuleKey'),
@@ -621,7 +689,10 @@ function applyPercentageOf(
     return readFail(rate.problem);
   }
 
-  return readOk(multiply(runningValue, add(money('1'), rate.value)));
+  return readOk({
+    value: multiply(runningValue, add(money('1'), rate.value)),
+    reference: ruleReference(ruleSet, rateRuleKey),
+  });
 }
 
 /**
@@ -664,7 +735,7 @@ function subtractAllowances(
   operandRef: string | null,
   runningValue: Money,
   allowanceCounts: Readonly<Partial<Record<StateRuleKey, number | null>>>,
-): Read<Money> {
+): Read<FormulaStepResult> {
   if (operandRef === null) {
     return readFail(
       invalidDetail('SUBTRACT_ALLOWANCES requires a non-null operandRef naming a StateRuleKey'),
@@ -725,7 +796,10 @@ function subtractAllowances(
   }
 
   const countMoney = money(String(count));
-  return readOk(subtract(runningValue, multiply(amount.value, countMoney)));
+  return readOk({
+    value: subtract(runningValue, multiply(amount.value, countMoney)),
+    reference: ruleReference(ruleSet, allowanceRuleKey),
+  });
 }
 
 /**
@@ -782,7 +856,7 @@ function addAmount(
   operandRef: string | null,
   runningValue: Money,
   resolvedElections: Readonly<Partial<Record<string, StateElectionValue | null>>>,
-): Read<Money> {
+): Read<FormulaStepResult> {
   if (operandRef === null) {
     return readFail(
       invalidDetail('ADD_AMOUNT requires a non-null operandRef naming an election fieldKey'),
@@ -858,7 +932,10 @@ function addAmount(
     );
   }
 
-  return readOk(add(runningValue, money(election.value)));
+  return readOk({
+    value: add(runningValue, money(election.value)),
+    reference: ruleReference(ruleSet, StateRuleKey.WITHHOLDING_ELECTION_FORM),
+  });
 }
 
 /**
@@ -910,7 +987,7 @@ function annualize(
   operandRef: string | null,
   runningValue: Money,
   payFrequency: string | null,
-): Read<Money> {
+): Read<FormulaStepResult> {
   if (operandRef !== null) {
     return readFail(
       invalidDetail(
@@ -934,7 +1011,10 @@ function annualize(
     return readFail(periodsPerYear.problem);
   }
 
-  return readOk(multiply(runningValue, money(String(periodsPerYear.value))));
+  return readOk({
+    value: multiply(runningValue, money(String(periodsPerYear.value))),
+    reference: ruleReference(ruleSet, StateRuleKey.WITHHOLDING_PAY_PERIODS_PER_YEAR),
+  });
 }
 
 /**
@@ -979,7 +1059,7 @@ function deannualize(
   operandRef: string | null,
   runningValue: Money,
   payFrequency: string | null,
-): Read<Money> {
+): Read<FormulaStepResult> {
   if (operandRef !== null) {
     return readFail(
       invalidDetail(
@@ -1003,7 +1083,10 @@ function deannualize(
     return readFail(periodsPerYear.problem);
   }
 
-  return readOk(divideHighPrecision(runningValue, money(String(periodsPerYear.value))));
+  return readOk({
+    value: divideHighPrecision(runningValue, money(String(periodsPerYear.value))),
+    reference: ruleReference(ruleSet, StateRuleKey.WITHHOLDING_PAY_PERIODS_PER_YEAR),
+  });
 }
 
 /**
@@ -1044,7 +1127,7 @@ export function runStateWithholdingFormula(
   allowanceCounts: Readonly<Partial<Record<StateRuleKey, number | null>>>,
   resolvedElections: Readonly<Partial<Record<string, StateElectionValue | null>>>,
   payFrequency: string | null,
-): Read<Money> {
+): Read<{ readonly amount: Money; readonly rules: readonly RuleReference[] }> {
   const ordinals = detail.steps.map((step) => step.ordinal);
   if (new Set(ordinals).size !== ordinals.length) {
     return readFail(
@@ -1057,72 +1140,98 @@ export function runStateWithholdingFormula(
   const ordered = [...detail.steps].sort((a, b) => a.ordinal - b.ordinal);
 
   let value = initialValue;
+  // DM-03 Slice 23 — accumulates references in first-successful-occurrence
+  // order, deduplicated by `ruleId@version`, exactly as `mergeReferences()`
+  // already does in `index.ts`/`deriveResolvedStateWageBuckets.ts`.
+  // `WITHHOLDING_FORMULA`'s own reference is deliberately never added here
+  // (Slice 22, Question A): this interpreter never reads that rule itself —
+  // it receives `detail` as an already-resolved parameter — so its own
+  // reference belongs to whichever future caller reads it, merged in at
+  // that caller's own layer, exactly like `bucket.rules` already is.
+  const references = new Map<string, RuleReference>();
+
+  function addReference(reference: RuleReference | undefined): void {
+    if (reference === undefined) return;
+    references.set(`${reference.ruleId}@${String(reference.version)}`, reference);
+  }
+
   for (const step of ordered) {
     switch (step.operation) {
       case 'FLOOR_AT_ZERO': {
         const result = floorAtZero(step.operandRef, value);
         if (!result.ok) return result;
-        value = result.value;
+        value = result.value.value;
+        addReference(result.value.reference);
         break;
       }
       case 'SUBTRACT_STANDARD_DEDUCTION': {
         const result = subtractStandardDeduction(ruleSet, filingStatus, step.operandRef, value);
         if (!result.ok) return result;
-        value = result.value;
+        value = result.value.value;
+        addReference(result.value.reference);
         break;
       }
       case 'APPLY_BRACKETS': {
         const result = applyBrackets(ruleSet, filingStatus, step.operandRef, value);
         if (!result.ok) return result;
-        value = result.value;
+        value = result.value.value;
+        addReference(result.value.reference);
         break;
       }
       case 'SUBTRACT_EXEMPTIONS': {
         const result = subtractExemptions(ruleSet, filingStatus, step.operandRef, value);
         if (!result.ok) return result;
-        value = result.value;
+        value = result.value.value;
+        addReference(result.value.reference);
         break;
       }
       case 'SUBTRACT_AMOUNT': {
         const result = subtractAmount(ruleSet, step.operandRef, value);
         if (!result.ok) return result;
-        value = result.value;
+        value = result.value.value;
+        addReference(result.value.reference);
         break;
       }
       case 'APPLY_FLAT_RATE': {
         const result = applyFlatRate(ruleSet, step.operandRef, value);
         if (!result.ok) return result;
-        value = result.value;
+        value = result.value.value;
+        addReference(result.value.reference);
         break;
       }
       case 'SUBTRACT_ALLOWANCES': {
         const result = subtractAllowances(ruleSet, step.operandRef, value, allowanceCounts);
         if (!result.ok) return result;
-        value = result.value;
+        value = result.value.value;
+        addReference(result.value.reference);
         break;
       }
       case 'ADD_AMOUNT': {
         const result = addAmount(ruleSet, step.operandRef, value, resolvedElections);
         if (!result.ok) return result;
-        value = result.value;
+        value = result.value.value;
+        addReference(result.value.reference);
         break;
       }
       case 'APPLY_PERCENTAGE_OF': {
         const result = applyPercentageOf(ruleSet, step.operandRef, value);
         if (!result.ok) return result;
-        value = result.value;
+        value = result.value.value;
+        addReference(result.value.reference);
         break;
       }
       case 'ANNUALIZE': {
         const result = annualize(ruleSet, step.operandRef, value, payFrequency);
         if (!result.ok) return result;
-        value = result.value;
+        value = result.value.value;
+        addReference(result.value.reference);
         break;
       }
       case 'DEANNUALIZE': {
         const result = deannualize(ruleSet, step.operandRef, value, payFrequency);
         if (!result.ok) return result;
-        value = result.value;
+        value = result.value.value;
+        addReference(result.value.reference);
         break;
       }
       default: {
@@ -1139,5 +1248,5 @@ export function runStateWithholdingFormula(
     }
   }
 
-  return readOk(value);
+  return readOk({ amount: value, rules: [...references.values()] });
 }

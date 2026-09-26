@@ -268,7 +268,7 @@ describe('ADD_AMOUNT — field declaration and type', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('1025');
+    expect(toStorageString(result.value.amount)).toBe('1025');
   });
 });
 
@@ -323,7 +323,7 @@ describe('ADD_AMOUNT — submitted value resolution', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('1050');
+    expect(toStorageString(result.value.amount)).toBe('1050');
   });
 
   it('reports RULE_DETAIL_INVALID for a submitted number value', () => {
@@ -385,7 +385,7 @@ describe('ADD_AMOUNT — unit matching', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('1100');
+    expect(toStorageString(result.value.amount)).toBe('1100');
   });
 
   it('accepts a matching PER_PERIOD unit', () => {
@@ -409,7 +409,7 @@ describe('ADD_AMOUNT — unit matching', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('1100');
+    expect(toStorageString(result.value.amount)).toBe('1100');
   });
 
   it('reports RULE_CONFLICT when the form declares ANNUAL but the submitted value declares PER_PERIOD', () => {
@@ -483,7 +483,7 @@ describe('ADD_AMOUNT — arithmetic', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('1075');
+    expect(toStorageString(result.value.amount)).toBe('1075');
   });
 
   it('adds zero, leaving the running value unchanged, without rejecting it', () => {
@@ -500,7 +500,7 @@ describe('ADD_AMOUNT — arithmetic', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('1000');
+    expect(toStorageString(result.value.amount)).toBe('1000');
   });
 
   it('adds a negative amount exactly as authored, without inventing a restriction', () => {
@@ -517,7 +517,7 @@ describe('ADD_AMOUNT — arithmetic', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('960');
+    expect(toStorageString(result.value.amount)).toBe('960');
   });
 
   it('operates on the running value left by a preceding formula step (sequential accumulator)', () => {
@@ -551,7 +551,7 @@ describe('ADD_AMOUNT — arithmetic', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
     // 1000 - 200 = 800; 800 + 30 = 830.
-    expect(toStorageString(result.value)).toBe('830');
+    expect(toStorageString(result.value.amount)).toBe('830');
   });
 });
 
@@ -637,7 +637,7 @@ describe('ADD_AMOUNT — jurisdiction scoping (via resolveWorkJurisdictionElecti
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('1060');
+    expect(toStorageString(result.value.amount)).toBe('1060');
   });
 
   it('never leaks a residence-jurisdiction election value into the resolved map', () => {
@@ -753,7 +753,7 @@ describe('ADD_AMOUNT — regression: other operations are unaffected', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
     // 5000 - 1000 = 4000; floor no-op; 4000 * 0.1 = 400.
-    expect(toStorageString(result.value)).toBe('400');
+    expect(toStorageString(result.value.amount)).toBe('400');
   });
 
   it('SUBTRACT_AMOUNT remains blocked on its own SCALAR_AMOUNT registry gap, unaffected by ADD_AMOUNT', () => {

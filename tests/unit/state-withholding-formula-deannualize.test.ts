@@ -134,7 +134,7 @@ describe('DEANNUALIZE — arithmetic (Tasks 4O-6R38-6R45-locked)', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
     // 120000 / 12 = 10000.
-    expect(toStorageString(result.value)).toBe('10000');
+    expect(toStorageString(result.value.amount)).toBe('10000');
   });
 
   it.each([
@@ -161,7 +161,7 @@ describe('DEANNUALIZE — arithmetic (Tasks 4O-6R38-6R45-locked)', () => {
 
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('expected ok');
-      expect(toStorageString(result.value)).toBe(expected);
+      expect(toStorageString(result.value.amount)).toBe(expected);
     },
   );
 
@@ -175,7 +175,7 @@ describe('DEANNUALIZE — arithmetic (Tasks 4O-6R38-6R45-locked)', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('0');
+    expect(toStorageString(result.value.amount)).toBe('0');
   });
 });
 
@@ -202,7 +202,7 @@ describe('DEANNUALIZE — high-precision division, no rounding', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('8.333333333333333333333333333333333');
+    expect(toStorageString(result.value.amount)).toBe('8.333333333333333333333333333333333');
   });
 
   it('does not consume WITHHOLDING_ROUNDING_POLICY — succeeds with no such rule resolved', () => {
@@ -498,7 +498,7 @@ describe('DEANNUALIZE — ordinal placement', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('100');
+    expect(toStorageString(result.value.amount)).toBe('100');
   });
 
   it('works as a middle step, sandwiched between ANNUALIZE and an already-supported operation', () => {
@@ -533,7 +533,7 @@ describe('DEANNUALIZE — ordinal placement', () => {
     if (!result.ok) throw new Error('expected ok');
     // 100 * 12 = 1200 (ANNUALIZE); 1200 / 12 = 100 (DEANNUALIZE);
     // 100 - 20 = 80 (SUBTRACT_STANDARD_DEDUCTION).
-    expect(toStorageString(result.value)).toBe('80');
+    expect(toStorageString(result.value.amount)).toBe('80');
   });
 
   it('works as the final step in a multi-step formula', () => {
@@ -563,7 +563,7 @@ describe('DEANNUALIZE — ordinal placement', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
     // 1200 - 200 = 1000; 1000 / 12 (high precision).
-    expect(toStorageString(result.value)).toBe('83.33333333333333333333333333333333');
+    expect(toStorageString(result.value.amount)).toBe('83.33333333333333333333333333333333');
   });
 
   it('executes two DEANNUALIZE steps in the same formula, each exactly once, in ordinal order', () => {
@@ -585,7 +585,7 @@ describe('DEANNUALIZE — ordinal placement', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
     // 1440 / 12 = 120; 120 / 12 = 10.
-    expect(toStorageString(result.value)).toBe('10');
+    expect(toStorageString(result.value.amount)).toBe('10');
   });
 });
 

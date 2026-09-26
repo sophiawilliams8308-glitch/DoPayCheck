@@ -138,7 +138,7 @@ describe('SUBTRACT_ALLOWANCES — arithmetic', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
     // 1000 - (100 * 1) = 900.
-    expect(toStorageString(result.value)).toBe('900');
+    expect(toStorageString(result.value.amount)).toBe('900');
   });
 
   it('subtracts amount x count for a count greater than one', () => {
@@ -162,7 +162,7 @@ describe('SUBTRACT_ALLOWANCES — arithmetic', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
     // 1000 - (100 * 4) = 600.
-    expect(toStorageString(result.value)).toBe('600');
+    expect(toStorageString(result.value.amount)).toBe('600');
   });
 
   it('subtracts zero and leaves the running value unchanged for a count of zero', () => {
@@ -185,7 +185,7 @@ describe('SUBTRACT_ALLOWANCES — arithmetic', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('1000');
+    expect(toStorageString(result.value.amount)).toBe('1000');
   });
 });
 
@@ -220,7 +220,7 @@ describe('SUBTRACT_ALLOWANCES — sequential accumulator behavior', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
     // 1000 - 200 = 800; 800 - (50 * 2) = 700.
-    expect(toStorageString(result.value)).toBe('700');
+    expect(toStorageString(result.value.amount)).toBe('700');
   });
 });
 
@@ -287,7 +287,7 @@ describe('SUBTRACT_ALLOWANCES — allowance count resolution', () => {
     if (!result.ok) throw new Error('expected ok');
     // 1000 - (100 * -1) = 1100 — not a rejection, since no second validation
     // layer exists here by design.
-    expect(toStorageString(result.value)).toBe('1100');
+    expect(toStorageString(result.value.amount)).toBe('1100');
   });
 
   it('does not re-validate a fractional count; that is rejected by input validation before the handler runs', () => {
@@ -312,7 +312,7 @@ describe('SUBTRACT_ALLOWANCES — allowance count resolution', () => {
     if (!result.ok) throw new Error('expected ok');
     // 1000 - (100 * 1.5) = 850 — money(String(1.5)) converts exactly; no
     // fractional-count rejection exists in this handler by design.
-    expect(toStorageString(result.value)).toBe('850');
+    expect(toStorageString(result.value.amount)).toBe('850');
   });
 
   it('uses only the count keyed to the operandRef actually used, ignoring an unrelated key in the same map', () => {
@@ -338,7 +338,7 @@ describe('SUBTRACT_ALLOWANCES — allowance count resolution', () => {
     if (!result.ok) throw new Error('expected ok');
     // 1000 - (100 * 2) = 800 — the decoy count under an unrelated key (99)
     // must never be substituted for the operandRef's own count.
-    expect(toStorageString(result.value)).toBe('800');
+    expect(toStorageString(result.value.amount)).toBe('800');
   });
 
   it('does not use allowanceType to look up the count, even when it coincidentally matches a key in the map', () => {
@@ -369,7 +369,7 @@ describe('SUBTRACT_ALLOWANCES — allowance count resolution', () => {
     // by string coincidence — the count used must still be ALLOWANCE_KEY's
     // own (3), proving lookup is by StateRuleKey/operandRef only.
     // 1000 - (100 * 3) = 700.
-    expect(toStorageString(result.value)).toBe('700');
+    expect(toStorageString(result.value.amount)).toBe('700');
   });
 });
 
@@ -518,7 +518,7 @@ describe('SUBTRACT_ALLOWANCES — null amount', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('1000');
+    expect(toStorageString(result.value.amount)).toBe('1000');
   });
 
   it('subtracts a negative amount exactly as normalized, following existing structural Decimal behavior', () => {
@@ -544,7 +544,7 @@ describe('SUBTRACT_ALLOWANCES — null amount', () => {
     // 1000 - (-50 * 2) = 1100 — no restriction against a negative amount is
     // added here beyond whatever the shared amount/Decimal helpers already
     // enforce.
-    expect(toStorageString(result.value)).toBe('1100');
+    expect(toStorageString(result.value.amount)).toBe('1100');
   });
 });
 
@@ -602,7 +602,7 @@ describe('SUBTRACT_ALLOWANCES — unit is not converted', () => {
     if (!result.ok) throw new Error('expected ok');
     // 1000 - (10 * 3) = 970 — the PER_PERIOD unit is never scaled against
     // ANNUAL or any period count; it is consumed as authored.
-    expect(toStorageString(result.value)).toBe('970');
+    expect(toStorageString(result.value.amount)).toBe('970');
   });
 });
 
@@ -628,6 +628,6 @@ describe('SUBTRACT_ALLOWANCES — precision', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
     // 1000 - (33.33 * 3) = 1000 - 99.99 = 900.01 exactly.
-    expect(toStorageString(result.value)).toBe('900.01');
+    expect(toStorageString(result.value.amount)).toBe('900.01');
   });
 });

@@ -127,7 +127,7 @@ describe('APPLY_FLAT_RATE — arithmetic', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('5');
+    expect(toStorageString(result.value.amount)).toBe('5');
   });
 
   it('multiplies the running value by a PERCENT rate, converted via readRate()', () => {
@@ -140,7 +140,7 @@ describe('APPLY_FLAT_RATE — arithmetic', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('5');
+    expect(toStorageString(result.value.amount)).toBe('5');
   });
 
   it('produces zero for a zero rate, without rejecting it', () => {
@@ -153,7 +153,7 @@ describe('APPLY_FLAT_RATE — arithmetic', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('0');
+    expect(toStorageString(result.value.amount)).toBe('0');
   });
 
   it('applies a negative rate exactly as normalized, without clamping/flooring/zeroing', () => {
@@ -166,7 +166,7 @@ describe('APPLY_FLAT_RATE — arithmetic', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('-10');
+    expect(toStorageString(result.value.amount)).toBe('-10');
   });
 });
 
@@ -204,7 +204,7 @@ describe('APPLY_FLAT_RATE — operandRef validation', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('2');
+    expect(toStorageString(result.value.amount)).toBe('2');
   });
 });
 
@@ -331,7 +331,7 @@ describe('APPLY_FLAT_RATE — applicability and appliesTo (owner-locked, Task 4O
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('5');
+    expect(toStorageString(result.value.amount)).toBe('5');
   });
 });
 
@@ -356,7 +356,7 @@ describe('APPLY_FLAT_RATE — precision', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('1.0005');
+    expect(toStorageString(result.value.amount)).toBe('1.0005');
   });
 });
 
@@ -380,6 +380,6 @@ describe('APPLY_FLAT_RATE — sequential accumulator behavior', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
     // 1000 - 200 = 800; 800 * 0.1 = 80.
-    expect(toStorageString(result.value)).toBe('80');
+    expect(toStorageString(result.value.amount)).toBe('80');
   });
 });

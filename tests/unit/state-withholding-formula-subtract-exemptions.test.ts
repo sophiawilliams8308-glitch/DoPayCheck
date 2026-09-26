@@ -121,7 +121,7 @@ describe('SUBTRACT_EXEMPTIONS — valid personal exemption', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('5700');
+    expect(toStorageString(result.value.amount)).toBe('5700');
   });
 });
 
@@ -317,7 +317,7 @@ describe('SUBTRACT_EXEMPTIONS — arithmetic', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('-50');
+    expect(toStorageString(result.value.amount)).toBe('-50');
   });
 
   it('floors only when a subsequent FLOOR_AT_ZERO step is present, at its own ordinal', () => {
@@ -336,7 +336,7 @@ describe('SUBTRACT_EXEMPTIONS — arithmetic', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('0');
+    expect(toStorageString(result.value.amount)).toBe('0');
   });
 });
 
@@ -366,7 +366,7 @@ describe('SUBTRACT_EXEMPTIONS — unit is not interpreted', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('5700');
+    expect(toStorageString(result.value.amount)).toBe('5700');
   });
 
   it('does not call resolveStatePayPeriodsPerYear or any pay-period reader', async () => {
@@ -410,6 +410,6 @@ describe('SUBTRACT_EXEMPTIONS — existing operations remain unchanged', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
     // 5000 - 1000 (standard deduction) - 500 (personal exemption) = 3500; floor no-op.
-    expect(toStorageString(result.value)).toBe('3500');
+    expect(toStorageString(result.value.amount)).toBe('3500');
   });
 });

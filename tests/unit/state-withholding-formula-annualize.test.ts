@@ -139,7 +139,7 @@ describe('ANNUALIZE — arithmetic (Task 4O-6R33-locked)', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
     // 1000 * 52 = 52000.
-    expect(toStorageString(result.value)).toBe('52000');
+    expect(toStorageString(result.value.amount)).toBe('52000');
   });
 
   it.each([
@@ -166,7 +166,7 @@ describe('ANNUALIZE — arithmetic (Task 4O-6R33-locked)', () => {
 
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('expected ok');
-      expect(toStorageString(result.value)).toBe(expected);
+      expect(toStorageString(result.value.amount)).toBe(expected);
     },
   );
 
@@ -180,7 +180,7 @@ describe('ANNUALIZE — arithmetic (Task 4O-6R33-locked)', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('0');
+    expect(toStorageString(result.value.amount)).toBe('0');
   });
 
   it('performs no rounding, preserving exact Decimal precision', () => {
@@ -203,7 +203,7 @@ describe('ANNUALIZE — arithmetic (Task 4O-6R33-locked)', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('520.26');
+    expect(toStorageString(result.value.amount)).toBe('520.26');
   });
 });
 
@@ -507,7 +507,7 @@ describe('ANNUALIZE — sequential accumulator behavior', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
     // 1000 - 200 = 800; 800 * 52 = 41600.
-    expect(toStorageString(result.value)).toBe('41600');
+    expect(toStorageString(result.value.amount)).toBe('41600');
   });
 
   it('does not read wages or StateCalculationContext directly — only the running value passed in', () => {
@@ -529,7 +529,7 @@ describe('ANNUALIZE — sequential accumulator behavior', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
     // 123.45 * 52 = 6419.4 — computed purely from the supplied running value.
-    expect(toStorageString(result.value)).toBe('6419.4');
+    expect(toStorageString(result.value.amount)).toBe('6419.4');
   });
 });
 

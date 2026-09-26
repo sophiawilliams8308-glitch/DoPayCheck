@@ -151,7 +151,7 @@ describe('empty step list', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('500');
+    expect(toStorageString(result.value.amount)).toBe('500');
   });
 });
 
@@ -172,7 +172,7 @@ describe('FLOOR_AT_ZERO', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('42.5');
+    expect(toStorageString(result.value.amount)).toBe('42.5');
   });
 
   it('replaces a negative running value with zero', () => {
@@ -183,7 +183,7 @@ describe('FLOOR_AT_ZERO', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('0');
+    expect(toStorageString(result.value.amount)).toBe('0');
   });
 
   it('reports RULE_DETAIL_INVALID for a non-null operandRef, which the operation takes none of', () => {
@@ -212,7 +212,7 @@ describe('SUBTRACT_STANDARD_DEDUCTION', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('4000');
+    expect(toStorageString(result.value.amount)).toBe('4000');
   });
 
   it('reports RULE_DETAIL_INVALID for a non-null operandRef', () => {
@@ -352,7 +352,7 @@ describe('APPLY_BRACKETS', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
     // First 1000 at 10% = 100; remaining 3000 at 20% = 600; total 700.
-    expect(toStorageString(result.value)).toBe('700');
+    expect(toStorageString(result.value.amount)).toBe('700');
   });
 
   it('reports RULE_DETAIL_INVALID for a null operandRef, which this operation requires', () => {
@@ -486,7 +486,7 @@ describe('ordered sequential execution', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
     // Ordinal order: subtract 1000 from 600 (-400), then floor to 0.
-    expect(toStorageString(result.value)).toBe('0');
+    expect(toStorageString(result.value.amount)).toBe('0');
   });
 
   it('reports RULE_CONFLICT for duplicate ordinals rather than choosing an order', () => {
@@ -521,7 +521,7 @@ describe('multiple formula steps', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
     // 5000 - 1000 = 4000; floor no-op; brackets: 100 + 600 = 700.
-    expect(toStorageString(result.value)).toBe('700');
+    expect(toStorageString(result.value.amount)).toBe('700');
   });
 
   it('short-circuits on the first failing step without running later steps', () => {
@@ -654,8 +654,8 @@ describe('Money precision — no floating-point arithmetic', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
     // In IEEE-754 doubles, 0.3 - 0.1 === 0.19999999999999998. This must be exact.
-    expect(toStorageString(result.value)).toBe('0.2');
-    expect(subtract(money('0.3'), money('0.1')).equals(result.value)).toBe(true);
+    expect(toStorageString(result.value.amount)).toBe('0.2');
+    expect(subtract(money('0.3'), money('0.1')).equals(result.value.amount)).toBe(true);
   });
 
   it('sums bracket slices exactly across three brackets, avoiding 0.1+0.1+0.1 drift', () => {
@@ -676,7 +676,7 @@ describe('Money precision — no floating-point arithmetic', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('0.3');
+    expect(toStorageString(result.value.amount)).toBe('0.3');
   });
 });
 
@@ -709,7 +709,20 @@ describe('no forbidden responsibilities', () => {
       .split('\n')
       .filter((line) => /^import\b/.test(line.trim()))
       .join('\n');
-    expect(importLines).not.toMatch(/lib\/calculator/);
+    // `RuleReference` (DM-03 Slice 23) is deliberately EXCLUDED from this
+    // forbidden pattern: it is a plain, passive, cross-layer PROVENANCE type
+    // — never orchestration/pipeline logic — and is already imported from
+    // this exact path by every other state calculation module
+    // (`index.ts`, `calculateSuta.ts`/`calculatePfml.ts`/`calculateSdi.ts`,
+    // `stateRuleSet.ts`, `assembleStateRuleSet.ts`, `resolveTaxability.ts`,
+    // `deriveResolvedStateWageBuckets.ts`, `types.ts`). This guard still
+    // forbids any OTHER `lib/calculator` import (pipeline, orchestration, or
+    // any value beyond this one type).
+    const withoutRuleReferenceType = importLines.replace(
+      /^import type \{ RuleReference \} from '@\/lib\/calculator\/types\/rules';$/m,
+      '',
+    );
+    expect(withoutRuleReferenceType).not.toMatch(/lib\/calculator/);
     // withholdingPayPeriods is deliberately EXCLUDED from this forbidden list:
     // ANNUALIZE (Task 4O-6R32-6R34, owner-locked) is explicitly required to
     // import resolveStatePayPeriodsPerYear from it. The other three remain

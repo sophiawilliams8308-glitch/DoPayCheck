@@ -129,7 +129,7 @@ describe('APPLY_PERCENTAGE_OF — arithmetic (owner-locked Option B, Task 4O-6R2
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
     // 1000 * (1 + 0.1) = 1100 — NOT 100, which is what APPLY_FLAT_RATE would produce.
-    expect(toStorageString(result.value)).toBe('1100');
+    expect(toStorageString(result.value.amount)).toBe('1100');
   });
 
   it('multiplies the running value by (1 + rate) for a PERCENT rate, converted via readRate()', () => {
@@ -142,7 +142,7 @@ describe('APPLY_PERCENTAGE_OF — arithmetic (owner-locked Option B, Task 4O-6R2
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('1100');
+    expect(toStorageString(result.value.amount)).toBe('1100');
   });
 
   it('leaves the running value unchanged for a zero rate, without rejecting it', () => {
@@ -156,7 +156,7 @@ describe('APPLY_PERCENTAGE_OF — arithmetic (owner-locked Option B, Task 4O-6R2
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
     // 500 * (1 + 0) = 500.
-    expect(toStorageString(result.value)).toBe('500');
+    expect(toStorageString(result.value.amount)).toBe('500');
   });
 
   it('applies a negative rate exactly as normalized, without clamping/flooring/zeroing', () => {
@@ -170,7 +170,7 @@ describe('APPLY_PERCENTAGE_OF — arithmetic (owner-locked Option B, Task 4O-6R2
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
     // 1000 * (1 + -0.1) = 1000 * 0.9 = 900.
-    expect(toStorageString(result.value)).toBe('900');
+    expect(toStorageString(result.value.amount)).toBe('900');
   });
 
   it('differs from APPLY_FLAT_RATE for the identical rate and running value', () => {
@@ -200,10 +200,10 @@ describe('APPLY_PERCENTAGE_OF — arithmetic (owner-locked Option B, Task 4O-6R2
     expect(percentageOfResult.ok).toBe(true);
     expect(flatRateResult.ok).toBe(true);
     if (!percentageOfResult.ok || !flatRateResult.ok) throw new Error('expected ok');
-    expect(toStorageString(percentageOfResult.value)).toBe('1050');
-    expect(toStorageString(flatRateResult.value)).toBe('50');
-    expect(toStorageString(percentageOfResult.value)).not.toBe(
-      toStorageString(flatRateResult.value),
+    expect(toStorageString(percentageOfResult.value.amount)).toBe('1050');
+    expect(toStorageString(flatRateResult.value.amount)).toBe('50');
+    expect(toStorageString(percentageOfResult.value.amount)).not.toBe(
+      toStorageString(flatRateResult.value.amount),
     );
   });
 });
@@ -242,7 +242,7 @@ describe('APPLY_PERCENTAGE_OF — operandRef validation', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('1020');
+    expect(toStorageString(result.value.amount)).toBe('1020');
   });
 });
 
@@ -369,7 +369,7 @@ describe('APPLY_PERCENTAGE_OF — applicability and appliesTo (transferred from 
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('1050');
+    expect(toStorageString(result.value.amount)).toBe('1050');
   });
 });
 
@@ -394,7 +394,7 @@ describe('APPLY_PERCENTAGE_OF — precision', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(toStorageString(result.value)).toBe('11.0055');
+    expect(toStorageString(result.value.amount)).toBe('11.0055');
   });
 });
 
@@ -418,6 +418,6 @@ describe('APPLY_PERCENTAGE_OF — sequential accumulator behavior', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
     // 1000 - 200 = 800; 800 * (1 + 0.1) = 880.
-    expect(toStorageString(result.value)).toBe('880');
+    expect(toStorageString(result.value.amount)).toBe('880');
   });
 });
