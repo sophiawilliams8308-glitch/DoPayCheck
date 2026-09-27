@@ -884,10 +884,16 @@ describe('DM-03 Slice 24 scope — index.ts wiring uses the dispatcher, never by
     expect(source).not.toMatch(/\.structure\s*===|switch\s*\(\s*\w+\.structure\s*\)/);
   });
 
-  it('does not implement TABLE post-selection arithmetic in index.ts', () => {
+  it('delegates TABLE post-selection arithmetic to withholdingTableArithmetic.ts, never implementing row selection inline (superseded by DM-03 Slice 33)', () => {
+    // Slice 24's own finding — "no approved post-selection arithmetic
+    // contract exists" — was superseded by Slice 30 (formula locked), Slice
+    // 32 (adjustment architecture locked) and Slice 33 (implemented). What
+    // must still hold: index.ts itself never duplicates row selection — it
+    // calls into the dedicated arithmetic module, exactly as it already
+    // delegates FORMULA execution to withholdingFormulaInterpreter.ts.
     const source = code(readFileSync(join(STATE, 'index.ts'), 'utf8'));
     expect(source).not.toMatch(/selectStateWithholdingTableRow/);
-    expect(source).toMatch(/TABLE_SELECTION_ONLY/);
+    expect(source).toMatch(/runStateWithholdingTable/);
     expect(source).toMatch(/METHOD_NOT_IMPLEMENTED/);
   });
 
@@ -945,10 +951,15 @@ describe('DM-03 Slice 18 scope — withholding table reader, read-only', () => {
     expect(source).not.toMatch(/tax\/federal|lib\/calculator/);
   });
 
-  it('is not wired into calculateStateTaxes(), index.ts, or the Slice 17 dispatcher', () => {
-    // Slice 18's explicit boundary: reader contract only, no wiring.
+  it('IS wired into calculateStateTaxes()/index.ts as of DM-03 Slice 33, but never into the Slice 17 dispatcher', () => {
+    // Slice 18's own boundary was "reader contract only, no wiring yet" — true
+    // at the time, superseded once Slice 33 implemented real TABLE arithmetic
+    // and wired this reader into index.ts (via withholdingTableArithmetic.ts).
+    // What must still hold: the Slice 17 methodology DISPATCHER itself never
+    // reads WITHHOLDING_TABLE — it only classifies which mechanism a declared
+    // structure names (withholdingMethodology.ts's own guard, unchanged).
     const indexSource = code(readFileSync(join(STATE, 'index.ts'), 'utf8'));
-    expect(indexSource).not.toMatch(/readWithholdingTable|withholdingTableReader/);
+    expect(indexSource).toMatch(/readWithholdingTable/);
     const methodologySource = code(
       readFileSync(join(STATE, 'rules/withholdingMethodology.ts'), 'utf8'),
     );
@@ -1050,6 +1061,107 @@ describe('DM-03 Slice 19 scope — rounding: ROUND stays excluded, appliedAt sta
     expect(tableReaderSource).toMatch(/export function readWithholdingTable\b/);
     expect(tableReaderSource).not.toMatch(
       /WITHHOLDING_ROUNDING_POLICY|readWithholdingRoundingPolicy/,
+    );
+  });
+});
+
+describe('DM-03 Slice 32/33 scope — TABLE adjustment architecture (OPTION C), locked and guarded', () => {
+  const arithmeticSource = (): string =>
+    code(readFileSync(join(STATE, 'rules/withholdingTableArithmetic.ts'), 'utf8'));
+
+  it('the TABLE adjustment vocabulary is closed to exactly the two Slice 32-locked rule keys', () => {
+    const schemaSource = code(readFileSync(join(STATE, 'rules/detailSchemas.ts'), 'utf8'));
+    const enumMatch = /StateTableAdjustmentRuleKey\s*=\s*z\.enum\(\[([\s\S]*?)\]\)/.exec(
+      schemaSource,
+    );
+    expect(enumMatch).not.toBeNull();
+    const enumBody = enumMatch?.[1] ?? '';
+    expect(enumBody).toMatch(/StateRuleKey\.WITHHOLDING_ALLOWANCE_VALUE/);
+    expect(enumBody).toMatch(/StateRuleKey\.WITHHOLDING_STANDARD_DEDUCTION/);
+    expect(enumBody).not.toMatch(
+      /PIT_STANDARD_DEDUCTION|PIT_PERSONAL_EXEMPTION|PIT_DEPENDENT_EXEMPTION/,
+    );
+  });
+
+  it('never reads or names a PIT_* rule anywhere in the TABLE arithmetic module', () => {
+    expect(arithmeticSource()).not.toMatch(
+      /PIT_STANDARD_DEDUCTION|PIT_PERSONAL_EXEMPTION|PIT_DEPENDENT_EXEMPTION/,
+    );
+  });
+
+  it('applies an adjustment only from within the declared-adjustments loop — never unconditionally', () => {
+    const source = arithmeticSource();
+    // Each apply* helper is defined once and called exactly once, and that
+    // one call site sits inside the `for (const adjustment of adjustments)`
+    // loop — never a second, unconditional call path that would run
+    // regardless of what the jurisdiction declared.
+    const standardDeductionCalls = source.match(/applyStandardDeductionAdjustment\(/g) ?? [];
+    const allowanceCalls = source.match(/applyAllowanceAdjustment\(/g) ?? [];
+    expect(standardDeductionCalls).toHaveLength(2); // definition + one call site
+    expect(allowanceCalls).toHaveLength(2);
+    expect(source).toMatch(/for \(const adjustment of adjustments\)/);
+  });
+
+  it('reads detail.adjustments (declaration-gated), never an unconditional allowance/deduction default', () => {
+    const source = arithmeticSource();
+    expect(source).toMatch(/detail\.adjustments/);
+  });
+
+  it('never reads WITHHOLDING_ROUNDING_POLICY — rounding stays the shared orchestrator step', () => {
+    expect(arithmeticSource()).not.toMatch(
+      /WITHHOLDING_ROUNDING_POLICY|readWithholdingRoundingPolicy/,
+    );
+  });
+
+  it('introduces no second rounding primitive — round() in lib/core/money.ts remains the only one', () => {
+    expect(arithmeticSource()).not.toMatch(
+      /function\s+(round|roundMoney|roundTo|quantize|roundTax|roundIntermediate)\s*\(/,
+    );
+  });
+
+  it('uses the existing selectStateWithholdingTableRow() rather than duplicating row-selection logic', () => {
+    const source = arithmeticSource();
+    expect(source).toMatch(/selectStateWithholdingTableRow\(/);
+    // No independent filing-status/pay-frequency/interval matching logic —
+    // those all remain inside withholdingTable.ts, unmodified.
+    expect(source).not.toMatch(/filingStatus\s*===\s*row|payFrequency\s*===\s*row/);
+  });
+
+  it("does not modify withholdingTable.ts's own selection contract", () => {
+    const selectorSource = code(readFileSync(join(STATE, 'rules/withholdingTable.ts'), 'utf8'));
+    expect(selectorSource).toMatch(/export function selectStateWithholdingTableRow/);
+    // The half-open [wageFrom, wageTo) interval, in actual executing code
+    // (not a doc comment, which `code()` strips): wageTo is an EXCLUSIVE
+    // upper bound (`< 0`), wageFrom an inclusive lower bound (`>= 0`).
+    expect(selectorSource).toMatch(/compare\(wages, money\(row\.wageTo\)\) < 0/);
+    expect(selectorSource).toMatch(/compare\(wages, money\(row\.wageFrom\)\) >= 0/);
+    expect(selectorSource).toMatch(/RULE_CONFLICT/);
+  });
+
+  it('the FORMULA interpreter is untouched by the TABLE architecture — no coupling either direction', () => {
+    const interpreterSource = code(
+      readFileSync(join(STATE, 'rules/withholdingFormulaInterpreter.ts'), 'utf8'),
+    );
+    expect(interpreterSource).not.toMatch(/withholdingTableArithmetic|runStateWithholdingTable/);
+    expect(arithmeticSource()).not.toMatch(
+      /withholdingFormulaInterpreter|runStateWithholdingFormula/,
+    );
+  });
+
+  it('imports no federal module — the TABLE arithmetic module stays state-only', () => {
+    expect(arithmeticSource()).not.toMatch(/tax\/federal|lib\/calculator\/pipeline/);
+  });
+
+  it("captures WITHHOLDING_TABLE's own container reference at the orchestrator layer, never re-reading it inside the arithmetic module", () => {
+    const indexSource = code(readFileSync(join(STATE, 'index.ts'), 'utf8'));
+    expect(indexSource).toMatch(/ruleReference\(ruleSet, StateRuleKey\.WITHHOLDING_TABLE\)/);
+    // The arithmetic module legitimately passes `StateRuleKey.WITHHOLDING_TABLE`
+    // as an error-message LABEL to `requireComponent()`/`readRate()` (exactly
+    // as `withholdingTable.ts`'s own `conflict()` helper already does) — what
+    // must never appear is that key passed to `readDetail(`/`stateRule(` as
+    // an actual second read of its own already-supplied detail parameter.
+    expect(arithmeticSource()).not.toMatch(
+      /(readDetail|stateRule)\(ruleSet, StateRuleKey\.WITHHOLDING_TABLE\)/,
     );
   });
 });

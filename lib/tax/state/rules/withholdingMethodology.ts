@@ -52,15 +52,19 @@ import { StateRuleKey } from '../ruleKeys';
  * which mechanism the DECLARED structure names, never which rule keys
  * happen to be present.
  *
- * `TABLE`'s classification carries a disclosed caveat: `selectStateWithholdingTableRow()`
- * (`withholdingTable.ts`) selects a row only — no post-selection arithmetic
- * (`baseWithholding + rate x excess` or equivalent) exists anywhere in the
- * repository (confirmed by DM-03 Slice 16's discovery pass). This module's
- * `TABLE` outcome is therefore explicitly marked incomplete-for-calculation
- * (`TABLE_SELECTION_ONLY`), never conflated with `FORMULA`'s outcome, which
- * — modulo the interpreter's own already-disclosed gaps (`ROUND`,
- * the `PIT_DEPENDENT_EXEMPTION` path of `SUBTRACT_EXEMPTIONS`) — can in
- * principle run to completion today.
+ * `TABLE`'s classification carried a disclosed caveat through DM-03 Slice 32:
+ * `selectStateWithholdingTableRow()` (`withholdingTable.ts`) selects a row
+ * only, and no post-selection arithmetic (`baseWithholding + rate x excess`
+ * or equivalent) existed anywhere in the repository (confirmed by DM-03
+ * Slice 16's discovery pass) — so this module's `TABLE` outcome was
+ * explicitly marked incomplete-for-calculation (`TABLE_SELECTION_ONLY`).
+ * DM-03 Slice 33 implements that arithmetic (`withholdingTableArithmetic.ts`,
+ * consumed by `index.ts`), on the Slice 30-locked formula and the Slice
+ * 32-locked, jurisdiction-authored adjustment mechanism (OPTION C) — so the
+ * outcome is renamed `TABLE` here, matching `FORMULA`'s own naming, and is no
+ * longer conflated with an incomplete calculation. This module's own
+ * classification logic is unchanged by that rename: it still decides only
+ * WHICH mechanism a declared `structure` names, never runs one.
  * ===========================================================================
  *
  * ===========================================================================
@@ -88,7 +92,7 @@ import { StateRuleKey } from '../ruleKeys';
  */
 
 export type WithholdingMethodologyDecision =
-  { readonly kind: 'FORMULA' } | { readonly kind: 'TABLE_SELECTION_ONLY' };
+  { readonly kind: 'FORMULA' } | { readonly kind: 'TABLE' };
 
 /**
  * Classifies an already-read `WITHHOLDING_METHOD` detail into which
@@ -103,7 +107,7 @@ export function resolveWithholdingMethodology(
     case 'FORMULA':
       return readOk({ kind: 'FORMULA' });
     case 'TABLE':
-      return readOk({ kind: 'TABLE_SELECTION_ONLY' });
+      return readOk({ kind: 'TABLE' });
     case 'NONE':
     case 'FLAT':
     case 'PROGRESSIVE':

@@ -45,12 +45,12 @@ describe('resolveWithholdingMethodology — established structures', () => {
     expect(result.value).toEqual({ kind: 'FORMULA' });
   });
 
-  it('classifies TABLE as TABLE_SELECTION_ONLY, never as a complete calculation', () => {
+  it('classifies TABLE as TABLE (DM-03 Slice 33: post-selection arithmetic now exists)', () => {
     const result = resolveWithholdingMethodology(methodDetail('TABLE'));
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
-    expect(result.value).toEqual({ kind: 'TABLE_SELECTION_ONLY' });
+    expect(result.value).toEqual({ kind: 'TABLE' });
     expect(result.value.kind).not.toBe('FORMULA');
   });
 });

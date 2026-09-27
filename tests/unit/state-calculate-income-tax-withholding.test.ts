@@ -431,8 +431,13 @@ describe('income tax withholding — missing methodology', () => {
   });
 });
 
-describe('income tax withholding — TABLE_SELECTION_ONLY', () => {
-  it('reports METHOD_NOT_IMPLEMENTED — no table arithmetic is invented', () => {
+describe('income tax withholding — TABLE dispatch (DM-03 Slice 33: real arithmetic now attempted)', () => {
+  it('fails RULE_MISSING when WITHHOLDING_TABLE itself is absent — no longer a fabricated METHOD_NOT_IMPLEMENTED', () => {
+    // Slice 33 wires TABLE to real arithmetic (withholdingTableArithmetic.ts):
+    // this fixture supplies WITHHOLDING_METHOD -> TABLE but no WITHHOLDING_TABLE
+    // rule at all, so the dispatch now genuinely attempts to read it and fails
+    // for its own real reason, exactly mirroring how the FORMULA path's
+    // analogous "missing WITHHOLDING_FORMULA" case already behaves.
     const ruleSet = buildRuleSet({
       [StateRuleKey.TAXABILITY_PROFILE]: availableEntry(
         StateRuleKey.TAXABILITY_PROFILE,
@@ -446,7 +451,7 @@ describe('income tax withholding — TABLE_SELECTION_ONLY', () => {
     const result = calculateStateTaxes(contextWith({ workRuleSet: ruleSet }), {});
 
     expect(result.employee.incomeTaxWithheld.amount).toBeNull();
-    expect(result.employee.incomeTaxWithheld.problem?.reason).toBe('METHOD_NOT_IMPLEMENTED');
+    expect(result.employee.incomeTaxWithheld.problem?.reason).toBe('RULE_MISSING');
   });
 });
 
@@ -806,5 +811,228 @@ describe('income tax withholding — rounding policy metadata and disclosure', (
     expect(result.methodology.roundingPolicyId).toBe(ROUNDING_POLICY_ID);
     expect(result.disclosures).toHaveLength(1);
     expect(result.disclosures[0]?.code).toBe('ROUNDING_POLICY');
+  });
+});
+
+/**
+ * DM-03 Slice 33 — state TABLE methodology, end to end through
+ * `calculateStateTaxes()`. Implements the Slice 32 LOCKED architecture
+ * (OPTION C) and the Slice 30 locked arithmetic; does not retest
+ * `runStateWithholdingTable()`'s own arithmetic/adjustment semantics
+ * (`state-withholding-table-arithmetic.test.ts`) or row selection
+ * (`state-withholding-table.test.ts`) — this file covers the orchestrator
+ * dispatch, the shared TAX_LEVEL rounding convergence, and provenance.
+ */
+function tableRow(overrides: Record<string, unknown> = {}) {
+  return {
+    ordinal: 0,
+    filingStatus: SINGLE,
+    payFrequency: 'BIWEEKLY',
+    wageFrom: '0',
+    wageTo: null,
+    baseWithholding: '0',
+    rate: '0.1',
+    unit: 'DECIMAL_FRACTION',
+    ...overrides,
+  };
+}
+
+function tableDetail(
+  rows: readonly Record<string, unknown>[],
+  adjustments?: readonly Record<string, unknown>[],
+) {
+  return {
+    shape: 'WITHHOLDING_TABLE',
+    tableCode: 'TEST-TABLE',
+    method: 'Synthetic percentage method',
+    rows,
+    ...(adjustments === undefined ? {} : { adjustments }),
+  };
+}
+
+/** A full TABLE-path ruleset, INCLUDING a valid `WITHHOLDING_ROUNDING_POLICY`
+ * — mirrors `formulaRuleSet()`'s own shape for the TABLE methodology. */
+function tableRuleSet(adjustments?: readonly Record<string, unknown>[]): ResolvedStateRuleSet {
+  return buildRuleSet({
+    [StateRuleKey.TAXABILITY_PROFILE]: availableEntry(
+      StateRuleKey.TAXABILITY_PROFILE,
+      profileSet(),
+    ),
+    [StateRuleKey.WITHHOLDING_METHOD]: availableEntry(
+      StateRuleKey.WITHHOLDING_METHOD,
+      methodDetail('TABLE'),
+    ),
+    [StateRuleKey.WITHHOLDING_TABLE]: availableEntry(
+      StateRuleKey.WITHHOLDING_TABLE,
+      tableDetail([tableRow()], adjustments),
+    ),
+    [StateRuleKey.WITHHOLDING_ROUNDING_POLICY]: availableEntry(
+      StateRuleKey.WITHHOLDING_ROUNDING_POLICY,
+      roundingPolicyDetail(),
+    ),
+  });
+}
+
+describe('income tax withholding — TABLE success (Test 35, 36)', () => {
+  it('dispatches to real TABLE arithmetic and reaches COMPLETE', () => {
+    // wages default to 1000 (contextWith()); baseWithholding 0, rate 0.1,
+    // wageFrom 0 -> excess 1000 -> unrounded 100, rounded 100.
+    const result = calculateStateTaxes(contextWith({ workRuleSet: tableRuleSet() }), {});
+
+    expect(result.employee.incomeTaxWithheld.status).toBe('COMPLETE');
+    expect(result.employee.incomeTaxWithheld.amount).toBe('100');
+  });
+
+  it('methodology.withholdingMethod reflects the resolved TABLE method name', () => {
+    const result = calculateStateTaxes(contextWith({ workRuleSet: tableRuleSet() }), {});
+    expect(result.methodology.withholdingMethod).toBe('Synthetic TABLE method');
+  });
+
+  it('the no-adjustment TABLE path is unaffected by a supplied allowanceCounts entry', () => {
+    const result = calculateStateTaxes(
+      contextWith({
+        workRuleSet: tableRuleSet(),
+        allowanceCounts: { [StateRuleKey.WITHHOLDING_ALLOWANCE_VALUE]: 4 },
+      }),
+      {},
+    );
+    expect(result.employee.incomeTaxWithheld.amount).toBe('100');
+  });
+});
+
+describe('income tax withholding — TABLE with a declared adjustment (Test 37, 38)', () => {
+  it('the allowance TABLE path executes the declared adjustment', () => {
+    const ruleSet = buildRuleSet({
+      [StateRuleKey.TAXABILITY_PROFILE]: availableEntry(
+        StateRuleKey.TAXABILITY_PROFILE,
+        profileSet(),
+      ),
+      [StateRuleKey.WITHHOLDING_METHOD]: availableEntry(
+        StateRuleKey.WITHHOLDING_METHOD,
+        methodDetail('TABLE'),
+      ),
+      [StateRuleKey.WITHHOLDING_TABLE]: availableEntry(
+        StateRuleKey.WITHHOLDING_TABLE,
+        tableDetail(
+          [tableRow()],
+          [{ ruleKey: StateRuleKey.WITHHOLDING_ALLOWANCE_VALUE, application: 'BEFORE_TABLE' }],
+        ),
+      ),
+      [StateRuleKey.WITHHOLDING_ALLOWANCE_VALUE]: availableEntry(
+        StateRuleKey.WITHHOLDING_ALLOWANCE_VALUE,
+        {
+          shape: 'AMOUNT_PER_ALLOWANCE',
+          unit: 'ANNUAL',
+          allowanceType: 'PERSONAL',
+          amount: '50',
+          applicability: 'APPLIES',
+        },
+      ),
+      [StateRuleKey.WITHHOLDING_ROUNDING_POLICY]: availableEntry(
+        StateRuleKey.WITHHOLDING_ROUNDING_POLICY,
+        roundingPolicyDetail(),
+      ),
+    });
+    const result = calculateStateTaxes(
+      contextWith({
+        workRuleSet: ruleSet,
+        allowanceCounts: { [StateRuleKey.WITHHOLDING_ALLOWANCE_VALUE]: 2 },
+      }),
+      {},
+    );
+
+    expect(result.employee.incomeTaxWithheld.status).toBe('COMPLETE');
+    // wage 1000 - (50*2) = 900; withholding = 0 + 0.1*900 = 90.
+    expect(result.employee.incomeTaxWithheld.amount).toBe('90');
+  });
+
+  it('the standard-deduction TABLE path executes the declared adjustment', () => {
+    const ruleSet = tableRuleSet([
+      { ruleKey: StateRuleKey.WITHHOLDING_STANDARD_DEDUCTION, application: 'BEFORE_TABLE' },
+    ]);
+    const ruleSetWithDeduction = buildRuleSet({
+      ...(ruleSet.entries as Partial<Record<StateRuleKey, StateRuleEntry>>),
+      [DEDUCTION_KEY]: availableEntry(DEDUCTION_KEY, standardDeductionDetail('100')),
+    });
+    const result = calculateStateTaxes(contextWith({ workRuleSet: ruleSetWithDeduction }), {});
+
+    expect(result.employee.incomeTaxWithheld.status).toBe('COMPLETE');
+    // wage 1000 - 100 = 900; withholding = 0 + 0.1*900 = 90.
+    expect(result.employee.incomeTaxWithheld.amount).toBe('90');
+  });
+});
+
+describe('income tax withholding — TABLE shared rounding (Test 24-28)', () => {
+  it('rounds the TABLE result via the shared TAX_LEVEL policy, respecting scale and mode', () => {
+    const ruleSet = buildRuleSet({
+      [StateRuleKey.TAXABILITY_PROFILE]: availableEntry(
+        StateRuleKey.TAXABILITY_PROFILE,
+        profileSet(),
+      ),
+      [StateRuleKey.WITHHOLDING_METHOD]: availableEntry(
+        StateRuleKey.WITHHOLDING_METHOD,
+        methodDetail('TABLE'),
+      ),
+      [StateRuleKey.WITHHOLDING_TABLE]: availableEntry(
+        StateRuleKey.WITHHOLDING_TABLE,
+        tableDetail([
+          tableRow({ wageFrom: '0', wageTo: null, baseWithholding: '0', rate: '0.05' }),
+        ]),
+      ),
+      [StateRuleKey.WITHHOLDING_ROUNDING_POLICY]: availableEntry(
+        StateRuleKey.WITHHOLDING_ROUNDING_POLICY,
+        roundingPolicyDetail({ currencyScale: 0, currencyMode: 'HALF_UP' }),
+      ),
+    });
+    // wage 1000 (default) -> 0 + 0.05*1000 = 50 exactly; use a wage that
+    // produces a fractional unrounded amount to prove real HALF_UP rounding.
+    const result = calculateStateTaxes(
+      contextWith({ workRuleSet: ruleSet, wages: { regular: '1000.06', supplemental: '0' } }),
+      {},
+    );
+    expect(result.employee.incomeTaxWithheld.status).toBe('COMPLETE');
+    // unrounded = 0.05 * 1000.06 = 50.003 -> HALF_UP at scale 0 -> 50.
+    expect(result.employee.incomeTaxWithheld.amount).toBe('50');
+  });
+
+  it('STEP_LEVEL reports METHOD_NOT_IMPLEMENTED for TABLE too, never a fabricated result', () => {
+    const ruleSet = buildRuleSet({
+      [StateRuleKey.TAXABILITY_PROFILE]: availableEntry(
+        StateRuleKey.TAXABILITY_PROFILE,
+        profileSet(),
+      ),
+      [StateRuleKey.WITHHOLDING_METHOD]: availableEntry(
+        StateRuleKey.WITHHOLDING_METHOD,
+        methodDetail('TABLE'),
+      ),
+      [StateRuleKey.WITHHOLDING_TABLE]: availableEntry(
+        StateRuleKey.WITHHOLDING_TABLE,
+        tableDetail([tableRow()]),
+      ),
+      [StateRuleKey.WITHHOLDING_ROUNDING_POLICY]: availableEntry(
+        StateRuleKey.WITHHOLDING_ROUNDING_POLICY,
+        roundingPolicyDetail({ appliedAt: 'STEP_LEVEL' }),
+      ),
+    });
+    const result = calculateStateTaxes(contextWith({ workRuleSet: ruleSet }), {});
+
+    expect(result.employee.incomeTaxWithheld.amount).toBeNull();
+    expect(result.employee.incomeTaxWithheld.problem?.reason).toBe('METHOD_NOT_IMPLEMENTED');
+  });
+});
+
+describe('income tax withholding — TABLE provenance (Test 29, 31)', () => {
+  it('includes the WITHHOLDING_TABLE container reference exactly once', () => {
+    const result = calculateStateTaxes(contextWith({ workRuleSet: tableRuleSet() }), {});
+    const tableReferences = result.employee.incomeTaxWithheld.rules.filter(
+      (r) => r.ruleKey === StateRuleKey.WITHHOLDING_TABLE,
+    );
+    expect(tableReferences).toHaveLength(1);
+  });
+
+  it('excludes the rounding policy reference from StateAmount.rules', () => {
+    const result = calculateStateTaxes(contextWith({ workRuleSet: tableRuleSet() }), {});
+    const ruleKeys = result.employee.incomeTaxWithheld.rules.map((r) => r.ruleKey);
+    expect(ruleKeys).not.toContain(StateRuleKey.WITHHOLDING_ROUNDING_POLICY);
   });
 });

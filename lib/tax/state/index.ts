@@ -1,4 +1,4 @@
-import { money, round, toStorageString, RoundingMode } from '@/lib/core/money';
+import { money, round, toStorageString, RoundingMode, type Money } from '@/lib/core/money';
 import { combineStatuses } from '@/lib/calculator/types/status';
 import type { RuleReference } from '@/lib/calculator/types/rules';
 
@@ -11,10 +11,13 @@ import { readWithholdingMethod } from './rules/withholdingMethod';
 import { resolveWithholdingMethodology } from './rules/withholdingMethodology';
 import { readWithholdingFormula } from './rules/withholdingFormula';
 import { runStateWithholdingFormula } from './rules/withholdingFormulaInterpreter';
+import { readWithholdingTable } from './rules/withholdingTableReader';
+import { runStateWithholdingTable } from './rules/withholdingTableArithmetic';
 import {
   readWithholdingRoundingPolicy,
   type StateRoundingPolicy,
 } from './rules/withholdingRoundingPolicy';
+import { type Read, readFail, readOk } from './rules/read-detail';
 import { calculatePfmlEmployee, calculatePfmlEmployer } from './pfml/calculatePfml';
 import { calculateSdiEmployee, calculateSdiEmployer } from './sdi/calculateSdi';
 import { calculateSutaEmployee, calculateSutaEmployer } from './suta/calculateSuta';
@@ -487,6 +490,105 @@ function roundingDisclosureMessage(policy: StateRoundingPolicy): string {
  * `xAmount()` function; `Read<T>`'s failure branch itself carries no value
  * to leak from in the first place).
  */
+/** The shape both the FORMULA and TABLE methodology branches converge on,
+ * before the one shared `TAX_LEVEL` rounding step (Slice 28) — see
+ * `incomeTaxWithheldAmount()`'s own doc comment for why this convergence
+ * exists (DM-03 Slice 33, per the Slice 24/28 architecture note that a
+ * future TABLE implementation would need this exact refactor). */
+type UnroundedWithholding = Read<{
+  readonly amount: Money;
+  readonly rules: readonly RuleReference[];
+}>;
+
+/**
+ * Runs the FORMULA methodology end to end (read `WITHHOLDING_FORMULA`, run
+ * the interpreter, capture the formula container reference) — unchanged
+ * behavior from Slice 24, only relocated so `incomeTaxWithheldAmount()` can
+ * treat it and `runTableMethodology()` identically before rounding. Still
+ * never reads `WITHHOLDING_TABLE`, still never touches the interpreter.
+ */
+function runFormulaMethodology(
+  context: StateCalculationContext,
+  ruleSet: ResolvedStateRuleSet,
+  wage: Money,
+  filingStatus: string | null,
+): UnroundedWithholding {
+  const formulaDetail = readWithholdingFormula(ruleSet);
+  if (!formulaDetail.ok) {
+    return readFail(formulaDetail.problem);
+  }
+
+  const resolvedElections = resolveWorkJurisdictionElections(context);
+
+  const formulaResult = runStateWithholdingFormula(
+    formulaDetail.value,
+    ruleSet,
+    wage,
+    filingStatus,
+    context.allowanceCounts,
+    resolvedElections,
+    context.payFrequency,
+  );
+  if (!formulaResult.ok) {
+    return readFail(formulaResult.problem);
+  }
+
+  const formulaContainerReference = ruleReference(ruleSet, StateRuleKey.WITHHOLDING_FORMULA);
+  return readOk({
+    amount: formulaResult.value.amount,
+    rules: mergeReferences([
+      formulaContainerReference === undefined ? [] : [formulaContainerReference],
+      formulaResult.value.rules,
+    ]),
+  });
+}
+
+/**
+ * Runs the TABLE methodology end to end — DM-03 Slice 33, implementing the
+ * Slice 32 LOCKED architecture (OPTION C): reads `WITHHOLDING_TABLE`, runs
+ * `runStateWithholdingTable()` (declared adjustments, then the existing,
+ * unmodified `selectStateWithholdingTableRow()`, then the Slice 30 locked
+ * formula), and captures `WITHHOLDING_TABLE`'s own container reference HERE
+ * — never inside `withholdingTableArithmetic.ts` — mirroring exactly how
+ * `runFormulaMethodology()` captures `WITHHOLDING_FORMULA`'s container
+ * reference at this same orchestrator layer (Slice 22 Question A / Slice 23
+ * / Slice 30 §10). `WITHHOLDING_METHOD`'s own reference is never merged in,
+ * matching the FORMULA path's identical (pre-existing) behavior.
+ */
+function runTableMethodology(
+  ruleSet: ResolvedStateRuleSet,
+  wage: Money,
+  filingStatus: string | null,
+  payFrequency: string,
+  allowanceCounts: StateCalculationContext['allowanceCounts'],
+): UnroundedWithholding {
+  const tableDetail = readWithholdingTable(ruleSet);
+  if (!tableDetail.ok) {
+    return readFail(tableDetail.problem);
+  }
+
+  const tableResult = runStateWithholdingTable(
+    tableDetail.value,
+    ruleSet,
+    wage,
+    filingStatus,
+    payFrequency,
+    allowanceCounts,
+  );
+  if (!tableResult.ok) {
+    return readFail(tableResult.problem);
+  }
+
+  const tableContainerReference = ruleReference(ruleSet, StateRuleKey.WITHHOLDING_TABLE);
+  return readOk({
+    amount: tableResult.value.amount,
+    rules: mergeReferences([
+      tableContainerReference === undefined ? [] : [tableContainerReference],
+      tableResult.value.rules,
+    ]),
+  });
+}
+
 function incomeTaxWithheldAmount(
   code: string,
   label: string,
@@ -532,65 +634,40 @@ function incomeTaxWithheldAmount(
     };
   }
 
-  if (methodology.value.kind === 'TABLE_SELECTION_ONLY') {
-    const problem = stateUnavailable(
-      StateReason.METHOD_NOT_IMPLEMENTED,
-      `${label} is not yet implemented for the TABLE withholding methodology — row selection ` +
-        'exists, but no approved post-selection arithmetic contract exists in this repository',
-    );
-    return {
-      code,
-      label,
-      amount: null,
-      status: statusForStateReason(problem.reason),
-      problem,
-      rules: [],
-    };
-  }
-
-  const formulaDetail = readWithholdingFormula(ruleSet);
-  if (!formulaDetail.ok) {
-    return {
-      code,
-      label,
-      amount: null,
-      status: statusForStateReason(formulaDetail.problem.reason),
-      problem: formulaDetail.problem,
-      rules: [],
-    };
-  }
-
   const filingStatus = context.elections[ruleSet.jurisdictionCode]?.filingStatus ?? null;
-  const resolvedElections = resolveWorkJurisdictionElections(context);
+  const wage = money(bucket.amount);
 
-  const formulaResult = runStateWithholdingFormula(
-    formulaDetail.value,
-    ruleSet,
-    money(bucket.amount),
-    filingStatus,
-    context.allowanceCounts,
-    resolvedElections,
-    context.payFrequency,
-  );
+  const unrounded: UnroundedWithholding =
+    methodology.value.kind === 'FORMULA'
+      ? runFormulaMethodology(context, ruleSet, wage, filingStatus)
+      : runTableMethodology(
+          ruleSet,
+          wage,
+          filingStatus,
+          context.payFrequency,
+          context.allowanceCounts,
+        );
 
-  if (!formulaResult.ok) {
+  if (!unrounded.ok) {
     return {
       code,
       label,
       amount: null,
-      status: statusForStateReason(formulaResult.problem.reason),
-      problem: formulaResult.problem,
+      status: statusForStateReason(unrounded.problem.reason),
+      problem: unrounded.problem,
       rules: [],
     };
   }
 
   // Rounding (Slice 28, per the Slice 26/27 locked contract) is applied
-  // here, strictly after the formula's own arithmetic has already succeeded.
-  // `policyResult` is read once, in `calculateStateTaxes()`, and shared with
-  // `methodology.roundingPolicyId`/`StateTaxResult.disclosures` exactly as
-  // `methodResult` already is for `methodology.withholdingMethod` — a policy
-  // failure here never carries partial rule provenance, and never returns
-  // the unrounded amount.
+  // here, strictly after EITHER methodology's own arithmetic has already
+  // succeeded — this is the shared convergence point DM-03 Slice 33 refactors
+  // this function around, so FORMULA and TABLE never each carry their own
+  // rounding path. `policyResult` is read once, in `calculateStateTaxes()`,
+  // and shared with `methodology.roundingPolicyId`/`StateTaxResult.disclosures`
+  // exactly as `methodResult` already is for `methodology.withholdingMethod`
+  // — a policy failure here never carries partial rule provenance, and never
+  // returns the unrounded amount.
   if (!policyResult.ok) {
     return {
       code,
@@ -619,23 +696,17 @@ function incomeTaxWithheldAmount(
   }
 
   const roundedAmount = round(
-    formulaResult.value.amount,
+    unrounded.value.amount,
     policyResult.value.currencyScale,
     policyResult.value.currencyMode,
   );
-
-  const formulaContainerReference = ruleReference(ruleSet, StateRuleKey.WITHHOLDING_FORMULA);
 
   return {
     code,
     label,
     amount: toStorageString(roundedAmount),
     status: 'COMPLETE',
-    rules: mergeReferences([
-      bucket.rules,
-      formulaContainerReference === undefined ? [] : [formulaContainerReference],
-      formulaResult.value.rules,
-    ]),
+    rules: mergeReferences([bucket.rules, unrounded.value.rules]),
   };
 }
 

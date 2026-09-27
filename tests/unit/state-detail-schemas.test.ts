@@ -1275,3 +1275,142 @@ describe('TAXABILITY_PROFILE — legacy/DM-03 hybrid payload regression (4O-6R65
     }
   });
 });
+
+/**
+ * WITHHOLDING_TABLE adjustments — DM-03 Slice 32/33 (OPTION C, TABLE-side
+ * authoring mechanism). No `operations[]`/`steps[]`/expression language: the
+ * adjustment vocabulary is closed to exactly the two rule keys Slice 31/32
+ * locked as TABLE-eligible, schema-enforced rather than runtime-checked, so
+ * a PIT_* key or any other `StateRuleKey` cannot be authored as a TABLE
+ * adjustment at all.
+ */
+describe('WITHHOLDING_TABLE adjustments (DM-03 Slice 32/33)', () => {
+  function table(overrides: Record<string, unknown> = {}) {
+    return {
+      shape: 'WITHHOLDING_TABLE',
+      tableCode: 'SYNTHETIC-TABLE',
+      method: 'Synthetic percentage method',
+      rows: [],
+      ...overrides,
+    };
+  }
+
+  it('accepts a table with no adjustments field at all — the pre-Slice-32 shape', () => {
+    const result = validateStateDetail(StateRuleKey.WITHHOLDING_TABLE, table());
+    expect(result.ok).toBe(true);
+  });
+
+  it('accepts an explicit empty adjustments array, identically to an absent field', () => {
+    const result = validateStateDetail(StateRuleKey.WITHHOLDING_TABLE, table({ adjustments: [] }));
+    expect(result.ok).toBe(true);
+  });
+
+  it('accepts a valid WITHHOLDING_ALLOWANCE_VALUE adjustment declaration', () => {
+    const result = validateStateDetail(
+      StateRuleKey.WITHHOLDING_TABLE,
+      table({
+        adjustments: [
+          { ruleKey: StateRuleKey.WITHHOLDING_ALLOWANCE_VALUE, application: 'BEFORE_TABLE' },
+        ],
+      }),
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it('accepts a valid WITHHOLDING_STANDARD_DEDUCTION adjustment declaration', () => {
+    const result = validateStateDetail(
+      StateRuleKey.WITHHOLDING_TABLE,
+      table({
+        adjustments: [
+          { ruleKey: StateRuleKey.WITHHOLDING_STANDARD_DEDUCTION, application: 'BEFORE_TABLE' },
+        ],
+      }),
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it('accepts both adjustments declared together, citing distinct rule keys', () => {
+    const result = validateStateDetail(
+      StateRuleKey.WITHHOLDING_TABLE,
+      table({
+        adjustments: [
+          { ruleKey: StateRuleKey.WITHHOLDING_STANDARD_DEDUCTION, application: 'BEFORE_TABLE' },
+          { ruleKey: StateRuleKey.WITHHOLDING_ALLOWANCE_VALUE, application: 'BEFORE_TABLE' },
+        ],
+      }),
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it.each([
+    StateRuleKey.PIT_STANDARD_DEDUCTION,
+    StateRuleKey.PIT_PERSONAL_EXEMPTION,
+    StateRuleKey.PIT_DEPENDENT_EXEMPTION,
+    StateRuleKey.WITHHOLDING_FORMULA,
+  ])('rejects %s — the adjustment vocabulary is closed to exactly two rule keys', (ruleKey) => {
+    const result = validateStateDetail(
+      StateRuleKey.WITHHOLDING_TABLE,
+      table({ adjustments: [{ ruleKey, application: 'BEFORE_TABLE' }] }),
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it('rejects AFTER_TABLE — no repository evidence supports a post-table adjustment shape', () => {
+    const result = validateStateDetail(
+      StateRuleKey.WITHHOLDING_TABLE,
+      table({
+        adjustments: [
+          {
+            ruleKey: StateRuleKey.WITHHOLDING_STANDARD_DEDUCTION,
+            application: 'AFTER_TABLE',
+          },
+        ],
+      }),
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it('rejects an unrecognized application value', () => {
+    const result = validateStateDetail(
+      StateRuleKey.WITHHOLDING_TABLE,
+      table({
+        adjustments: [
+          {
+            ruleKey: StateRuleKey.WITHHOLDING_STANDARD_DEDUCTION,
+            application: 'DURING_TABLE',
+          },
+        ],
+      }),
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it('rejects a malformed declaration missing application entirely', () => {
+    const result = validateStateDetail(
+      StateRuleKey.WITHHOLDING_TABLE,
+      table({ adjustments: [{ ruleKey: StateRuleKey.WITHHOLDING_STANDARD_DEDUCTION }] }),
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it('rejects a malformed declaration missing ruleKey entirely', () => {
+    const result = validateStateDetail(
+      StateRuleKey.WITHHOLDING_TABLE,
+      table({ adjustments: [{ application: 'BEFORE_TABLE' }] }),
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it('rejects two adjustment entries citing the same ruleKey — ambiguous, never "last wins"', () => {
+    const result = validateStateDetail(
+      StateRuleKey.WITHHOLDING_TABLE,
+      table({
+        adjustments: [
+          { ruleKey: StateRuleKey.WITHHOLDING_STANDARD_DEDUCTION, application: 'BEFORE_TABLE' },
+          { ruleKey: StateRuleKey.WITHHOLDING_STANDARD_DEDUCTION, application: 'BEFORE_TABLE' },
+        ],
+      }),
+    );
+    expect(result.ok).toBe(false);
+  });
+});

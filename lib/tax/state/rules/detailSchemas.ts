@@ -122,6 +122,61 @@ export const stateBracketTableDetailSchema = z.object({
 });
 
 // --- WITHHOLDING_TABLE (the paycheck number) --------------------------------
+/**
+ * The closed vocabulary of rule keys a `WITHHOLDING_TABLE` may cite as an
+ * adjustment — DM-03 Slice 32 (locked architecture, OPTION C) / Slice 33
+ * (implementation).
+ *
+ * ===========================================================================
+ * DELIBERATELY NOT `StateRuleKey` GENERALLY.
+ *
+ * `WITHHOLDING_FORMULA`'s own `steps[].operandRef` is a free string, validated
+ * at RUNTIME against the full `VALID_RULE_KEYS` membership set
+ * (`withholdingFormulaInterpreter.ts`) — appropriate there because FORMULA is
+ * a general-purpose, jurisdiction-authored execution sequence. TABLE is
+ * explicitly NOT a second formula language (Slice 32/33): its adjustment
+ * mechanism exists to express exactly the two rule keys Slice 31/32 locked as
+ * TABLE-eligible, nothing more. Restricting this at the SCHEMA level, rather
+ * than with a runtime membership check, makes it structurally impossible to
+ * author a `PIT_STANDARD_DEDUCTION`/`PIT_PERSONAL_EXEMPTION`/
+ * `PIT_DEPENDENT_EXEMPTION` (or any other) TABLE adjustment — an invalid
+ * value fails Zod validation and is reported as `RULE_DETAIL_INVALID` by the
+ * existing `readDetail()`, never reaching a runtime check that could drift
+ * from the schema.
+ * ===========================================================================
+ */
+export const StateTableAdjustmentRuleKey = z.enum([
+  StateRuleKey.WITHHOLDING_ALLOWANCE_VALUE,
+  StateRuleKey.WITHHOLDING_STANDARD_DEDUCTION,
+]);
+
+/**
+ * Where the adjustment applies relative to TABLE row selection.
+ *
+ * ONLY `BEFORE_TABLE` is a member. No repository evidence (Slice 30/31/32 —
+ * including the non-binding federal analog) supports a post-table adjustment
+ * shape, and inventing one now would be exactly the guessed semantic this
+ * project's discipline forbids. The field still exists, and is still
+ * schema-validated (an unrecognized value fails `RULE_DETAIL_INVALID`, never
+ * silently ignored), because Slice 32 locked "the jurisdiction-authored TABLE
+ * contract determines the adjustment ordering" as a required, EXPLICIT
+ * capability — a future amendment adding `AFTER_TABLE` (with its own
+ * arithmetic contract) would extend this enum and this engine build's
+ * interpreter, not silently repurpose an assumed default.
+ */
+export const StateTableAdjustmentApplication = z.enum(['BEFORE_TABLE']);
+
+/**
+ * One TABLE-side adjustment declaration. `ruleKey` names which existing rule
+ * supplies the adjustment amount; `application` states where it applies. No
+ * `operations[]`/`steps[]`/expression language — TABLE is not a second
+ * FORMULA (Slice 33 §7).
+ */
+const stateTableAdjustmentSchema = z.object({
+  ruleKey: StateTableAdjustmentRuleKey,
+  application: StateTableAdjustmentApplication,
+});
+
 export const stateWithholdingTableDetailSchema = z.object({
   shape: z.literal('WITHHOLDING_TABLE'),
   /** The identifier the official document gives this table. */
@@ -142,6 +197,31 @@ export const stateWithholdingTableDetailSchema = z.object({
       unit: StateRateUnit,
     }),
   ),
+  /**
+   * TABLE-side adjustment declarations — DM-03 Slice 32/33 (OPTION C).
+   *
+   * `undefined`/absent means NO adjustment: the jurisdiction's table is
+   * self-contained, and row selection/arithmetic run directly against
+   * `stateIncomeTaxWages` — the exact behavior every existing `WITHHOLDING_TABLE`
+   * fixture (authored before this field existed) already has, preserved
+   * without requiring any fixture to change. An explicit empty array `[]`
+   * means the identical thing, deterministically. Two entries citing the SAME
+   * `ruleKey` are rejected as ambiguous (which one would apply is undecidable
+   * from the data itself) — never resolved by array order or "last wins".
+   */
+  adjustments: z
+    .array(stateTableAdjustmentSchema)
+    .optional()
+    .refine(
+      (adjustments) => {
+        if (adjustments === undefined) {
+          return true;
+        }
+        const seen = new Set(adjustments.map((adjustment) => adjustment.ruleKey));
+        return seen.size === adjustments.length;
+      },
+      { message: 'adjustments must not declare the same ruleKey more than once' },
+    ),
 });
 
 // --- WAGE_BASE --------------------------------------------------------------
