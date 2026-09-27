@@ -98,7 +98,12 @@ describe('applyStateWageBase — finite base', () => {
       ),
     });
 
-    const result = applyStateWageBase(ruleSet, StateRuleKey.SDI_WAGE_BASE, money('500'));
+    const result = applyStateWageBase(
+      ruleSet,
+      StateRuleKey.SDI_WAGE_BASE,
+      money('500'),
+      money('0'),
+    );
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -116,7 +121,12 @@ describe('applyStateWageBase — finite base', () => {
       ),
     });
 
-    const result = applyStateWageBase(ruleSet, StateRuleKey.SDI_WAGE_BASE, money('1000'));
+    const result = applyStateWageBase(
+      ruleSet,
+      StateRuleKey.SDI_WAGE_BASE,
+      money('1000'),
+      money('0'),
+    );
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -131,11 +141,132 @@ describe('applyStateWageBase — finite base', () => {
       ),
     });
 
-    const result = applyStateWageBase(ruleSet, StateRuleKey.SDI_WAGE_BASE, money('1500'));
+    const result = applyStateWageBase(
+      ruleSet,
+      StateRuleKey.SDI_WAGE_BASE,
+      money('1500'),
+      money('0'),
+    );
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
     expect(equals(result.value.applicableWages, money('1000'))).toBe(true);
+  });
+});
+
+describe('applyStateWageBase — YTD-aware capping', () => {
+  function baseRuleSet(amount: string): ResolvedStateRuleSet {
+    return buildRuleSet({
+      [StateRuleKey.SDI_WAGE_BASE]: availableEntry(
+        StateRuleKey.SDI_WAGE_BASE,
+        wageBaseDetail(amount),
+      ),
+    });
+  }
+
+  it('Case 1 — YTD below base: remaining = base - ytd, taxable = periodWages', () => {
+    const ruleSet = baseRuleSet('10000');
+    const result = applyStateWageBase(
+      ruleSet,
+      StateRuleKey.SDI_WAGE_BASE,
+      money('3000'),
+      money('4000'),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    // remaining = 10000 - 4000 = 6000; taxable = min(3000, 6000) = 3000
+    expect(equals(result.value.applicableWages, money('3000'))).toBe(true);
+    expect(result.value.wageBase).not.toBeNull();
+    if (result.value.wageBase === null) throw new Error('expected a wage base');
+    expect(equals(result.value.wageBase, money('10000'))).toBe(true);
+  });
+
+  it('Case 2 — YTD near base: taxable is clamped to the remaining amount', () => {
+    const ruleSet = baseRuleSet('10000');
+    const result = applyStateWageBase(
+      ruleSet,
+      StateRuleKey.SDI_WAGE_BASE,
+      money('3000'),
+      money('9000'),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    // remaining = 10000 - 9000 = 1000; taxable = min(3000, 1000) = 1000
+    expect(equals(result.value.applicableWages, money('1000'))).toBe(true);
+  });
+
+  it('Case 3 — YTD already at base: taxable is zero', () => {
+    const ruleSet = baseRuleSet('10000');
+    const result = applyStateWageBase(
+      ruleSet,
+      StateRuleKey.SDI_WAGE_BASE,
+      money('3000'),
+      money('10000'),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    // remaining = max(10000 - 10000, 0) = 0; taxable = min(3000, 0) = 0
+    expect(equals(result.value.applicableWages, money('0'))).toBe(true);
+  });
+
+  it('Case 4 — YTD above base: remaining floors at zero, never negative', () => {
+    const ruleSet = baseRuleSet('10000');
+    const result = applyStateWageBase(
+      ruleSet,
+      StateRuleKey.SDI_WAGE_BASE,
+      money('3000'),
+      money('12000'),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    // remaining = max(10000 - 12000, 0) = 0; taxable = min(3000, 0) = 0
+    expect(equals(result.value.applicableWages, money('0'))).toBe(true);
+  });
+
+  it('Case 5 — period wages below the remaining cap: taxable equals period wages', () => {
+    const ruleSet = baseRuleSet('10000');
+    const result = applyStateWageBase(
+      ruleSet,
+      StateRuleKey.SDI_WAGE_BASE,
+      money('500'),
+      money('2000'),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    // remaining = 10000 - 2000 = 8000; taxable = min(500, 8000) = 500
+    expect(equals(result.value.applicableWages, money('500'))).toBe(true);
+  });
+
+  it('zero YTD reduces to the original single-period clamp', () => {
+    const ruleSet = baseRuleSet('1000');
+    const result = applyStateWageBase(
+      ruleSet,
+      StateRuleKey.SDI_WAGE_BASE,
+      money('1500'),
+      money('0'),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    expect(equals(result.value.applicableWages, money('1000'))).toBe(true);
+  });
+
+  it('NOT_APPLICABLE ignores YTD entirely — wages pass through unchanged', () => {
+    const ruleSet = buildRuleSet({
+      [StateRuleKey.PFML_WAGE_BASE]: availableEntry(
+        StateRuleKey.PFML_WAGE_BASE,
+        wageBaseDetail(null, 'NOT_APPLICABLE'),
+      ),
+    });
+    const result = applyStateWageBase(
+      ruleSet,
+      StateRuleKey.PFML_WAGE_BASE,
+      money('999999.99'),
+      money('500000'),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    expect(equals(result.value.applicableWages, money('999999.99'))).toBe(true);
+    expect(result.value.wageBase).toBeNull();
   });
 });
 
@@ -148,7 +279,12 @@ describe('applyStateWageBase — no cap (NOT_APPLICABLE)', () => {
       ),
     });
 
-    const result = applyStateWageBase(ruleSet, StateRuleKey.PFML_WAGE_BASE, money('999999.99'));
+    const result = applyStateWageBase(
+      ruleSet,
+      StateRuleKey.PFML_WAGE_BASE,
+      money('999999.99'),
+      money('0'),
+    );
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -165,7 +301,12 @@ describe('applyStateWageBase — no cap (NOT_APPLICABLE)', () => {
       ),
     });
 
-    const result = applyStateWageBase(ruleSet, StateRuleKey.SDI_WAGE_BASE, money('500'));
+    const result = applyStateWageBase(
+      ruleSet,
+      StateRuleKey.SDI_WAGE_BASE,
+      money('500'),
+      money('0'),
+    );
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -177,7 +318,12 @@ describe('applyStateWageBase — missing rule', () => {
   it('reports RULE_MISSING and never assumes zero or unlimited wages', () => {
     const ruleSet = buildRuleSet({});
 
-    const result = applyStateWageBase(ruleSet, StateRuleKey.SDI_WAGE_BASE, money('500'));
+    const result = applyStateWageBase(
+      ruleSet,
+      StateRuleKey.SDI_WAGE_BASE,
+      money('500'),
+      money('0'),
+    );
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -197,7 +343,12 @@ describe('applyStateWageBase — invalid detail', () => {
       }),
     });
 
-    const result = applyStateWageBase(ruleSet, StateRuleKey.SDI_WAGE_BASE, money('500'));
+    const result = applyStateWageBase(
+      ruleSet,
+      StateRuleKey.SDI_WAGE_BASE,
+      money('500'),
+      money('0'),
+    );
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -215,7 +366,12 @@ describe('applyStateWageBase — invalid detail', () => {
       }),
     });
 
-    const result = applyStateWageBase(ruleSet, StateRuleKey.SDI_WAGE_BASE, money('500'));
+    const result = applyStateWageBase(
+      ruleSet,
+      StateRuleKey.SDI_WAGE_BASE,
+      money('500'),
+      money('0'),
+    );
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -233,7 +389,12 @@ describe('applyStateWageBase — unverified rule', () => {
       ),
     });
 
-    const result = applyStateWageBase(ruleSet, StateRuleKey.SDI_WAGE_BASE, money('500'));
+    const result = applyStateWageBase(
+      ruleSet,
+      StateRuleKey.SDI_WAGE_BASE,
+      money('500'),
+      money('0'),
+    );
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -250,7 +411,7 @@ describe('applyStateWageBase — every supported wage-base key', () => {
     );
 
     for (const key of KEYS) {
-      const result = applyStateWageBase(ruleSet, key, money('8000'));
+      const result = applyStateWageBase(ruleSet, key, money('8000'), money('0'));
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('expected ok');
       expect(equals(result.value.applicableWages, money('7000'))).toBe(true);
@@ -267,7 +428,12 @@ describe('applyStateWageBase — exact Money behavior', () => {
       ),
     });
 
-    const exact = applyStateWageBase(ruleSet, StateRuleKey.SUTA_WAGE_BASE, money('7000.02'));
+    const exact = applyStateWageBase(
+      ruleSet,
+      StateRuleKey.SUTA_WAGE_BASE,
+      money('7000.02'),
+      money('0'),
+    );
 
     expect(exact.ok).toBe(true);
     if (!exact.ok) throw new Error('expected ok');
@@ -281,7 +447,7 @@ describe('purity', () => {
     const ruleSet = buildRuleSet({ [StateRuleKey.SDI_WAGE_BASE]: entry });
 
     const before = stateRule(ruleSet, StateRuleKey.SDI_WAGE_BASE);
-    applyStateWageBase(ruleSet, StateRuleKey.SDI_WAGE_BASE, money('500'));
+    applyStateWageBase(ruleSet, StateRuleKey.SDI_WAGE_BASE, money('500'), money('0'));
     const after = stateRule(ruleSet, StateRuleKey.SDI_WAGE_BASE);
 
     expect(after).toBe(before);
@@ -297,7 +463,12 @@ describe('purity', () => {
         wageBaseDetail('1000'),
       ),
     });
-    const result = applyStateWageBase(ruleSet, StateRuleKey.SDI_WAGE_BASE, money('500'));
+    const result = applyStateWageBase(
+      ruleSet,
+      StateRuleKey.SDI_WAGE_BASE,
+      money('500'),
+      money('0'),
+    );
     expect(result).not.toBeInstanceOf(Promise);
   });
 });

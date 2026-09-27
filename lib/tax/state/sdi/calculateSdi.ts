@@ -26,42 +26,29 @@ import { StateRuleKey } from '../ruleKeys';
  * ===========================================================================
  *
  * ===========================================================================
- * WAGE BASE: APPLIED ONLY WHEN THE DATA SAYS THERE ISN'T ONE.
+ * WAGE BASE: YTD-AWARE (DM-03 wage-base YTD wiring).
  *
- * `applyStateWageBase()` (`wageBase.ts`) is explicitly documented as "a
- * simple CURRENT-INPUT clamp, not a YTD wage-base tracker" — it clamps
- * whatever single wage figure it is given against the ANNUAL base, with no
- * year-to-date accumulation. `StateCalculationContext` carries no YTD wages
- * field (unlike federal's `calculateSocialSecurity(ruleSet, periodWages,
- * ytdWages, policy)`, which requires one explicitly) — so a real, resolved
- * `SDI_WAGE_BASE` (`applicability: 'APPLIES'`) cannot be CORRECTLY enforced
- * from this repository's current inputs: clamping only this one pay period
- * against the full annual base would silently under-collect early in the
- * year and, without any account of prior periods, still risk misrepresenting
- * a genuinely capped programme as fully computed.
- *
- * This is exactly the trap DM-03 Slice 10's own instructions name: "Do not
- * implement a cap merely because a wageBase field exists." So:
+ * `applyStateWageBase()` (`wageBase.ts`) now consumes the caller-supplied
+ * `StateCalculationContext.ytd.sdiWages` — wages from this employer,
+ * EXCLUDING the current pay period, per `StateYtd`'s own established
+ * convention — to compute `remaining = max(base - ytdWages, 0)` before
+ * clamping the current period's wages against it:
  *
  *   SDI_WAGE_BASE resolves NOT_APPLICABLE -> no cap exists; proceed uncapped.
- *   SDI_WAGE_BASE resolves APPLIES        -> a real cap exists that this
- *                                             engine cannot yet enforce ->
- *                                             SCENARIO_UNSUPPORTED (an
- *                                             EXISTING StateReason, not
- *                                             invented for this case),
- *                                             mirroring exactly how
- *                                             resolveTaxability() already
- *                                             reports a MONTHLY limit
- *                                             without priorAppliedAmount.
+ *   SDI_WAGE_BASE resolves APPLIES        -> capped correctly against the
+ *                                             remaining annual base, using
+ *                                             the supplied YTD figure.
  *   SDI_WAGE_BASE rule missing/unverified/invalid -> that failure, verbatim
  *                                             (the SAME failure
  *                                             applyStateWageBase() already
  *                                             produces; not reinterpreted).
  *
  * `SDI_MAX_CONTRIBUTION` (a separate rule key, separate schema,
- * `stateThresholdDetailSchema`) has the identical YTD problem and NO
- * existing reader/primitive anywhere in the repository — it is left
- * entirely unread here, a deferred item, not a half-built one.
+ * `stateThresholdDetailSchema`) is a different, still-deferred concern (a
+ * contribution-total cap, not a wage-base cap) — it has NO existing
+ * reader/primitive anywhere in the repository and remains entirely unread
+ * here, a deferred item, not a half-built one; this wiring does not extend
+ * to it.
  * ===========================================================================
  *
  * ===========================================================================
@@ -118,23 +105,11 @@ function ruleReference(
 function resolveSdiTaxableWages(
   ruleSet: ResolvedStateRuleSet,
   sdiWages: Money,
+  ytdWages: Money,
 ): Read<{ readonly applicableWages: Money; readonly reference: RuleReference | undefined }> {
-  const wageBase = applyStateWageBase(ruleSet, StateRuleKey.SDI_WAGE_BASE, sdiWages);
+  const wageBase = applyStateWageBase(ruleSet, StateRuleKey.SDI_WAGE_BASE, sdiWages, ytdWages);
   if (!wageBase.ok) {
     return readFail(wageBase.problem);
-  }
-
-  if (wageBase.value.wageBase !== null) {
-    return readFail(
-      stateUnavailable(
-        StateReason.SCENARIO_UNSUPPORTED,
-        'STATE.SDI.WAGE_BASE resolves APPLIES with a real cap, but this engine has no ' +
-          'year-to-date wage tracking to enforce an annual cap correctly across pay periods; ' +
-          'a single-period clamp against the full annual base would misrepresent the ' +
-          'calculation, so this scenario is not yet supported',
-        StateRuleKey.SDI_WAGE_BASE,
-      ),
-    );
   }
 
   return readOk({
@@ -146,10 +121,11 @@ function resolveSdiTaxableWages(
 function calculateSdiSide(
   ruleSet: ResolvedStateRuleSet,
   sdiWages: Money,
+  ytdWages: Money,
   rateRuleKey: typeof StateRuleKey.SDI_EMPLOYEE_RATE | typeof StateRuleKey.SDI_EMPLOYER_RATE,
   expectedSide: 'EMPLOYEE' | 'EMPLOYER',
 ): Read<SdiContribution> {
-  const taxable = resolveSdiTaxableWages(ruleSet, sdiWages);
+  const taxable = resolveSdiTaxableWages(ruleSet, sdiWages, ytdWages);
   if (!taxable.ok) {
     return readFail(taxable.problem);
   }
@@ -197,18 +173,24 @@ function calculateSdiSide(
   });
 }
 
-/** SDI employee contribution for this pay period, from already-resolved SDI wages. */
+/** SDI employee contribution for this pay period, from already-resolved SDI
+ * wages and this employer's YTD SDI wages (`StateYtd.sdiWages`, excluding
+ * the current period). */
 export function calculateSdiEmployee(
   ruleSet: ResolvedStateRuleSet,
   sdiWages: Money,
+  ytdWages: Money,
 ): Read<SdiContribution> {
-  return calculateSdiSide(ruleSet, sdiWages, StateRuleKey.SDI_EMPLOYEE_RATE, 'EMPLOYEE');
+  return calculateSdiSide(ruleSet, sdiWages, ytdWages, StateRuleKey.SDI_EMPLOYEE_RATE, 'EMPLOYEE');
 }
 
-/** SDI employer contribution for this pay period, from already-resolved SDI wages. */
+/** SDI employer contribution for this pay period, from already-resolved SDI
+ * wages and this employer's YTD SDI wages (`StateYtd.sdiWages`, excluding
+ * the current period). */
 export function calculateSdiEmployer(
   ruleSet: ResolvedStateRuleSet,
   sdiWages: Money,
+  ytdWages: Money,
 ): Read<SdiContribution> {
-  return calculateSdiSide(ruleSet, sdiWages, StateRuleKey.SDI_EMPLOYER_RATE, 'EMPLOYER');
+  return calculateSdiSide(ruleSet, sdiWages, ytdWages, StateRuleKey.SDI_EMPLOYER_RATE, 'EMPLOYER');
 }

@@ -18,9 +18,12 @@ import { StateRuleKey } from '@/lib/tax/state/ruleKeys';
  * `state-calculate-sdi.test.ts` already established (reserved TEST
  * jurisdiction/source ids, no real tax value). Only established repository
  * behavior is asserted: the wage base IS applied when NOT_APPLICABLE (no
- * cap), and reports SCENARIO_UNSUPPORTED — never a fabricated capped
- * amount — when a real cap resolves APPLIES, since this engine has no
- * year-to-date wage tracking. No speculative cap arithmetic is tested.
+ * cap), and — since the DM-03 wage-base YTD wiring — is now correctly
+ * capped against the remaining annual base (`remaining = max(base -
+ * ytdWages, 0)`) when a real cap resolves APPLIES, using the caller-supplied
+ * `ytdWages` (this employer's `StateYtd.pfmlWages`, excluding the current
+ * period). Tests not specifically about YTD pass `money('0')` for
+ * `ytdWages`, which reduces to the original single-period clamp.
  */
 
 const JURISDICTION_CODE = 'TEST-PFML';
@@ -118,14 +121,18 @@ function uncappedEmployerRuleSet(rate = '0.006'): ResolvedStateRuleSet {
 
 describe('calculatePfmlEmployee — positive path', () => {
   it('computes taxable PFML wages x resolved PFML employee rate', () => {
-    const result = calculatePfmlEmployee(uncappedEmployeeRuleSet('0.006'), money('50000'));
+    const result = calculatePfmlEmployee(
+      uncappedEmployeeRuleSet('0.006'),
+      money('50000'),
+      money('0'),
+    );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(toStorageString(result.value.amount)).toBe('300');
   });
 
   it('zero PFML wages yields zero, never a fabricated non-zero amount', () => {
-    const result = calculatePfmlEmployee(uncappedEmployeeRuleSet('0.006'), money('0'));
+    const result = calculatePfmlEmployee(uncappedEmployeeRuleSet('0.006'), money('0'), money('0'));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(toStorageString(result.value.amount)).toBe('0');
@@ -142,7 +149,7 @@ describe('calculatePfmlEmployee — positive path', () => {
         rateDetail('0.6', 'PERCENT', 'EMPLOYEE'),
       ),
     });
-    const result = calculatePfmlEmployee(ruleSet, money('50000'));
+    const result = calculatePfmlEmployee(ruleSet, money('50000'), money('0'));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     // 0.6% == 0.006 as a decimal fraction, same as the DECIMAL_FRACTION case.
@@ -150,7 +157,11 @@ describe('calculatePfmlEmployee — positive path', () => {
   });
 
   it('is precision-sensitive: no silent truncation or rounding', () => {
-    const result = calculatePfmlEmployee(uncappedEmployeeRuleSet('0.0072'), money('1234.56'));
+    const result = calculatePfmlEmployee(
+      uncappedEmployeeRuleSet('0.0072'),
+      money('1234.56'),
+      money('0'),
+    );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(toStorageString(result.value.amount)).toBe('8.888832');
@@ -158,14 +169,18 @@ describe('calculatePfmlEmployee — positive path', () => {
 
   it('is deterministic: identical inputs produce an identical result on repeated calls', () => {
     const ruleSet = uncappedEmployeeRuleSet('0.0075');
-    const first = calculatePfmlEmployee(ruleSet, money('842.17'));
-    const second = calculatePfmlEmployee(ruleSet, money('842.17'));
+    const first = calculatePfmlEmployee(ruleSet, money('842.17'), money('0'));
+    const second = calculatePfmlEmployee(ruleSet, money('842.17'), money('0'));
     expect(first).toEqual(second);
   });
 
   it('does not use JavaScript floating-point arithmetic for the calculation', () => {
     expect(19.9 * 0.01).not.toBe(0.199);
-    const result = calculatePfmlEmployee(uncappedEmployeeRuleSet('0.01'), money('19.9'));
+    const result = calculatePfmlEmployee(
+      uncappedEmployeeRuleSet('0.01'),
+      money('19.9'),
+      money('0'),
+    );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(toStorageString(result.value.amount)).toBe('0.199');
@@ -174,47 +189,90 @@ describe('calculatePfmlEmployee — positive path', () => {
 
 describe('calculatePfmlEmployer — mirrors the employee path on the employer rate', () => {
   it('computes taxable PFML wages x resolved PFML employer rate', () => {
-    const result = calculatePfmlEmployer(uncappedEmployerRuleSet('0.014'), money('2000'));
+    const result = calculatePfmlEmployer(
+      uncappedEmployerRuleSet('0.014'),
+      money('2000'),
+      money('0'),
+    );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(toStorageString(result.value.amount)).toBe('28');
   });
 
   it('an employee-only rule set has no employer rate, so the employer side fails RULE_MISSING', () => {
-    const result = calculatePfmlEmployer(uncappedEmployeeRuleSet(), money('2000'));
+    const result = calculatePfmlEmployer(uncappedEmployeeRuleSet(), money('2000'), money('0'));
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.problem.reason).toBe('RULE_MISSING');
   });
 });
 
-describe('wage base — applied only when the data says there is no cap', () => {
+describe('wage base — YTD-aware capping (DM-03 wage-base YTD wiring)', () => {
   it('NOT_APPLICABLE: proceeds uncapped, COMPLETE', () => {
-    const result = calculatePfmlEmployee(uncappedEmployeeRuleSet('0.01'), money('5000'));
+    const result = calculatePfmlEmployee(
+      uncappedEmployeeRuleSet('0.01'),
+      money('5000'),
+      money('0'),
+    );
     expect(result.ok).toBe(true);
   });
 
+  it('APPLIES with zero YTD: capped against the full annual base, never SCENARIO_UNSUPPORTED', () => {
+    const ruleSet = buildRuleSet({
+      [StateRuleKey.PFML_WAGE_BASE]: availableEntry(
+        StateRuleKey.PFML_WAGE_BASE,
+        wageBaseDetail('APPLIES', '1000'),
+      ),
+      [StateRuleKey.PFML_EMPLOYEE_RATE]: availableEntry(
+        StateRuleKey.PFML_EMPLOYEE_RATE,
+        rateDetail('0.006', 'DECIMAL_FRACTION', 'EMPLOYEE'),
+      ),
+    });
+    const result = calculatePfmlEmployee(ruleSet, money('5000'), money('0'));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // remaining = max(1000 - 0, 0) = 1000; taxable = min(5000, 1000) = 1000.
+    expect(toStorageString(result.value.amount)).toBe('6');
+  });
+
   it(
-    'APPLIES with a real amount: SCENARIO_UNSUPPORTED, never a silently-capped or ' +
-      'silently-ignored amount — this engine has no year-to-date wage tracking to enforce it',
+    'APPLIES with YTD PFML wages (StateYtd.pfmlWages) already consuming most of the base: ' +
+      'only the remaining base is taxed this period',
     () => {
       const ruleSet = buildRuleSet({
         [StateRuleKey.PFML_WAGE_BASE]: availableEntry(
           StateRuleKey.PFML_WAGE_BASE,
-          wageBaseDetail('APPLIES', '160200'),
+          wageBaseDetail('APPLIES', '1000'),
         ),
         [StateRuleKey.PFML_EMPLOYEE_RATE]: availableEntry(
           StateRuleKey.PFML_EMPLOYEE_RATE,
-          rateDetail('0.006', 'DECIMAL_FRACTION', 'EMPLOYEE'),
+          rateDetail('0.01', 'DECIMAL_FRACTION', 'EMPLOYEE'),
         ),
       });
-      const result = calculatePfmlEmployee(ruleSet, money('5000'));
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
-      expect(result.problem.reason).toBe('SCENARIO_UNSUPPORTED');
-      expect(result.problem.ruleKey).toBe(StateRuleKey.PFML_WAGE_BASE);
+      const result = calculatePfmlEmployee(ruleSet, money('5000'), money('900'));
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      // remaining = max(1000 - 900, 0) = 100; taxable = min(5000, 100) = 100.
+      expect(toStorageString(result.value.amount)).toBe('1');
     },
   );
+
+  it('APPLIES with YTD already at or above the base: taxable wages floor at zero, never negative', () => {
+    const ruleSet = buildRuleSet({
+      [StateRuleKey.PFML_WAGE_BASE]: availableEntry(
+        StateRuleKey.PFML_WAGE_BASE,
+        wageBaseDetail('APPLIES', '1000'),
+      ),
+      [StateRuleKey.PFML_EMPLOYEE_RATE]: availableEntry(
+        StateRuleKey.PFML_EMPLOYEE_RATE,
+        rateDetail('0.01', 'DECIMAL_FRACTION', 'EMPLOYEE'),
+      ),
+    });
+    const result = calculatePfmlEmployee(ruleSet, money('5000'), money('1500'));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(toStorageString(result.value.amount)).toBe('0');
+  });
 
   it('missing PFML_WAGE_BASE rule entirely fails RULE_MISSING, never treated as "no cap"', () => {
     const ruleSet = buildRuleSet({
@@ -223,7 +281,7 @@ describe('wage base — applied only when the data says there is no cap', () => 
         rateDetail('0.006', 'DECIMAL_FRACTION', 'EMPLOYEE'),
       ),
     });
-    const result = calculatePfmlEmployee(ruleSet, money('5000'));
+    const result = calculatePfmlEmployee(ruleSet, money('5000'), money('0'));
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.problem.reason).toBe('RULE_MISSING');
@@ -241,7 +299,7 @@ describe('wage base — applied only when the data says there is no cap', () => 
         rateDetail('0.006', 'DECIMAL_FRACTION', 'EMPLOYEE'),
       ),
     });
-    const result = calculatePfmlEmployee(ruleSet, money('5000'));
+    const result = calculatePfmlEmployee(ruleSet, money('5000'), money('0'));
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.problem.reason).toBe('RULE_UNVERIFIED');
@@ -260,7 +318,7 @@ describe('rate applicability and appliesTo — consulted, never assumed', () => 
         rateDetail(null, 'DECIMAL_FRACTION', 'EMPLOYEE', 'NOT_APPLICABLE'),
       ),
     });
-    const result = calculatePfmlEmployee(ruleSet, money('5000'));
+    const result = calculatePfmlEmployee(ruleSet, money('5000'), money('0'));
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.problem.reason).toBe('SCENARIO_UNSUPPORTED');
@@ -280,7 +338,7 @@ describe('rate applicability and appliesTo — consulted, never assumed', () => 
           rateDetail('0.006', 'DECIMAL_FRACTION', 'EMPLOYER'),
         ),
       });
-      const result = calculatePfmlEmployee(ruleSet, money('5000'));
+      const result = calculatePfmlEmployee(ruleSet, money('5000'), money('0'));
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.problem.reason).toBe('SCENARIO_UNSUPPORTED');
@@ -298,7 +356,7 @@ describe('rate applicability and appliesTo — consulted, never assumed', () => 
         rateDetail(null, 'DECIMAL_FRACTION', 'EMPLOYEE'),
       ),
     });
-    const result = calculatePfmlEmployee(ruleSet, money('5000'));
+    const result = calculatePfmlEmployee(ruleSet, money('5000'), money('0'));
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.problem.reason).toBe('COMPONENT_NOT_STATED');
@@ -313,7 +371,7 @@ describe('missing/unverified/invalid PFML_EMPLOYEE_RATE — established readDeta
         wageBaseDetail('NOT_APPLICABLE'),
       ),
     });
-    const result = calculatePfmlEmployee(ruleSet, money('5000'));
+    const result = calculatePfmlEmployee(ruleSet, money('5000'), money('0'));
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.problem.reason).toBe('RULE_MISSING');
@@ -331,7 +389,7 @@ describe('missing/unverified/invalid PFML_EMPLOYEE_RATE — established readDeta
         { verificationStatus: 'PENDING' },
       ),
     });
-    const result = calculatePfmlEmployee(ruleSet, money('5000'));
+    const result = calculatePfmlEmployee(ruleSet, money('5000'), money('0'));
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.problem.reason).toBe('RULE_UNVERIFIED');
@@ -350,7 +408,7 @@ describe('missing/unverified/invalid PFML_EMPLOYEE_RATE — established readDeta
         applicability: 'APPLIES',
       }),
     });
-    const result = calculatePfmlEmployee(ruleSet, money('5000'));
+    const result = calculatePfmlEmployee(ruleSet, money('5000'), money('0'));
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.problem.reason).toBe('RULE_DETAIL_INVALID');
@@ -360,7 +418,7 @@ describe('missing/unverified/invalid PFML_EMPLOYEE_RATE — established readDeta
 describe('provenance', () => {
   it('merges the wage-base and rate rule references, deduplicated', () => {
     const ruleSet = uncappedEmployeeRuleSet('0.006');
-    const result = calculatePfmlEmployee(ruleSet, money('50000'));
+    const result = calculatePfmlEmployee(ruleSet, money('50000'), money('0'));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const ruleKeys = result.value.rules.map((r) => r.ruleKey).sort();
@@ -371,7 +429,7 @@ describe('provenance', () => {
 
   it('never fabricates a reference when the calculation itself fails', () => {
     const ruleSet = buildRuleSet({});
-    const result = calculatePfmlEmployee(ruleSet, money('5000'));
+    const result = calculatePfmlEmployee(ruleSet, money('5000'), money('0'));
     expect(result.ok).toBe(false);
   });
 });

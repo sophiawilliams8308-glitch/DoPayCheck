@@ -1,4 +1,4 @@
-import { type Money, min } from '@/lib/core/money';
+import { type Money, max, min, subtract, zero } from '@/lib/core/money';
 
 import type { StateWageBaseDetail } from './detailSchemas';
 import { readDetail, readFail, readOk, requireComponent, type Read } from './read-detail';
@@ -27,15 +27,17 @@ import { StateRuleKey } from '../ruleKeys';
  * anywhere in this file.
  *
  * ===========================================================================
- * A SIMPLE CURRENT-INPUT CLAMP, NOT A YTD WAGE-BASE TRACKER.
+ * YTD-AWARE: `remaining = max(base - ytdWages, 0)`, `taxable = min(wages, remaining)`.
  *
- * `applyStateWageBase` clamps whatever `wages` it is given against the
- * resolved base — it does not know about year-to-date wages, does not
- * compute a "remaining base", and does not decide what "wages" means for a
- * given call (current-period, cumulative, or otherwise). That is the future
- * SDI/PFML/SUTA calculation context's decision to make and pass in; adding
- * YTD accumulation here would invent a business rule this task's contract
- * does not ask for.
+ * `ytdWages` is the caller's already-resolved `StateYtd` figure for this
+ * programme — wages from this employer, EXCLUDING the current pay period,
+ * the same convention `StateYtd`'s own doc comment establishes (mirroring
+ * the Phase 4 federal convention, D-SS-1). This module does not accumulate,
+ * mutate, or reinterpret that figure — it only combines it with the
+ * resolved base to determine how much of the annual base remains before
+ * clamping the current period's wages against it. It still does not decide
+ * what "wages" means for a given call beyond that; that remains the
+ * calling module's responsibility, unchanged.
  *
  * ===========================================================================
  * NOT_APPLICABLE IS THE SCHEMA'S OWN "NO CAP" REPRESENTATION.
@@ -61,7 +63,7 @@ import { StateRuleKey } from '../ruleKeys';
  *
  * No existing project contract forbids a negative `wages` input at this
  * layer (`validateStateContext` does not check wage sign either), so this
- * module does not invent one. `min(wages, wageBase)` is applied exactly as
+ * module does not invent one. `min(wages, remaining)` is applied exactly as
  * given; a caller supplying a negative wage figure gets a negative result
  * back, unmodified — the same "do not invent a business rule" discipline
  * this task's own contract requires.
@@ -88,16 +90,21 @@ export interface StateWageBaseApplication {
 
 /**
  * Applies a state wage base to a wage figure, using an already-resolved,
- * already-frozen `ResolvedStateRuleSet`.
+ * already-frozen `ResolvedStateRuleSet` and the caller's already-resolved
+ * year-to-date wages for this programme (`StateYtd`'s convention: excluding
+ * the current pay period).
  *
  * Delegates all existence/verification/schema-validity handling to the
  * existing `readDetail()` — this module adds only the wage-base semantics
- * (`APPLIES` -> clamp; `NOT_APPLICABLE` -> unchanged, no cap) on top.
+ * (`APPLIES` -> `remaining = max(base - ytdWages, 0)`, clamp current wages
+ * to `remaining`; `NOT_APPLICABLE` -> unchanged, no cap, `ytdWages` unused)
+ * on top.
  */
 export function applyStateWageBase(
   ruleSet: ResolvedStateRuleSet,
   ruleKey: StateWageBaseRuleKey,
   wages: Money,
+  ytdWages: Money,
 ): Read<StateWageBaseApplication> {
   const found = readDetail(ruleSet, ruleKey);
   if (!found.ok) {
@@ -115,5 +122,6 @@ export function applyStateWageBase(
     return readFail(amount.problem);
   }
 
-  return readOk({ applicableWages: min(wages, amount.value), wageBase: amount.value });
+  const remaining = max(subtract(amount.value, ytdWages), zero());
+  return readOk({ applicableWages: min(wages, remaining), wageBase: amount.value });
 }

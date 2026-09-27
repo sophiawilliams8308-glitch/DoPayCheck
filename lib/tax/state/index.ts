@@ -175,6 +175,7 @@ function sdiAmount(
   ruleSet: ResolvedStateRuleSet,
   buckets: Readonly<Record<StateBucket, StateAmount>>,
   side: 'EMPLOYEE' | 'EMPLOYER',
+  ytdWages: Money,
 ): StateAmount {
   const bucket = buckets[PROGRAM_BUCKET.SDI];
 
@@ -191,8 +192,8 @@ function sdiAmount(
 
   const result =
     side === 'EMPLOYEE'
-      ? calculateSdiEmployee(ruleSet, money(bucket.amount))
-      : calculateSdiEmployer(ruleSet, money(bucket.amount));
+      ? calculateSdiEmployee(ruleSet, money(bucket.amount), ytdWages)
+      : calculateSdiEmployer(ruleSet, money(bucket.amount), ytdWages);
 
   if (!result.ok) {
     return {
@@ -236,6 +237,7 @@ function pfmlAmount(
   ruleSet: ResolvedStateRuleSet,
   buckets: Readonly<Record<StateBucket, StateAmount>>,
   side: 'EMPLOYEE' | 'EMPLOYER',
+  ytdWages: Money,
 ): StateAmount {
   const bucket = buckets[PROGRAM_BUCKET.PFML];
 
@@ -252,8 +254,8 @@ function pfmlAmount(
 
   const result =
     side === 'EMPLOYEE'
-      ? calculatePfmlEmployee(ruleSet, money(bucket.amount))
-      : calculatePfmlEmployer(ruleSet, money(bucket.amount));
+      ? calculatePfmlEmployee(ruleSet, money(bucket.amount), ytdWages)
+      : calculatePfmlEmployer(ruleSet, money(bucket.amount), ytdWages);
 
   if (!result.ok) {
     return {
@@ -294,6 +296,7 @@ function sutaEmployeeAmount(
   label: string,
   ruleSet: ResolvedStateRuleSet,
   buckets: Readonly<Record<StateBucket, StateAmount>>,
+  ytdWages: Money,
 ): StateAmount {
   const bucket = buckets[PROGRAM_BUCKET.SUTA];
 
@@ -308,7 +311,7 @@ function sutaEmployeeAmount(
     };
   }
 
-  const result = calculateSutaEmployee(ruleSet, money(bucket.amount));
+  const result = calculateSutaEmployee(ruleSet, money(bucket.amount), ytdWages);
 
   if (!result.ok) {
     return {
@@ -351,6 +354,7 @@ function sutaEmployerAmount(
   label: string,
   ruleSet: ResolvedStateRuleSet,
   buckets: Readonly<Record<StateBucket, StateAmount>>,
+  ytdWages: Money,
   employerSutaRate: string | undefined,
 ): StateAmount {
   const bucket = buckets[PROGRAM_BUCKET.SUTA];
@@ -366,7 +370,7 @@ function sutaEmployerAmount(
     };
   }
 
-  const result = calculateSutaEmployer(ruleSet, money(bucket.amount), employerSutaRate);
+  const result = calculateSutaEmployer(ruleSet, money(bucket.amount), ytdWages, employerSutaRate);
 
   if (!result.ok) {
     return {
@@ -813,6 +817,7 @@ export function calculateStateTaxes(
     context.workRuleSet,
     buckets,
     'EMPLOYEE',
+    money(context.ytd.sdiWages),
   );
   const pfmlEmployee = pfmlAmount(
     'PFML_EMPLOYEE',
@@ -820,12 +825,14 @@ export function calculateStateTaxes(
     context.workRuleSet,
     buckets,
     'EMPLOYEE',
+    money(context.ytd.pfmlWages),
   );
   const sutaEmployee = sutaEmployeeAmount(
     'SUTA_EMPLOYEE',
     'SUTA employee contribution',
     context.workRuleSet,
     buckets,
+    money(context.ytd.sutaWages),
   );
 
   const employeeComponents: StateComponentResult[] = [
@@ -885,6 +892,7 @@ export function calculateStateTaxes(
       context.workRuleSet,
       buckets,
       'EMPLOYER',
+      money(context.ytd.sdiWages),
     );
     const pfmlEmployer = pfmlAmount(
       'PFML_EMPLOYER',
@@ -892,12 +900,14 @@ export function calculateStateTaxes(
       context.workRuleSet,
       buckets,
       'EMPLOYER',
+      money(context.ytd.pfmlWages),
     );
     const sutaEmployer = sutaEmployerAmount(
       'SUTA_EMPLOYER',
       'SUTA employer contribution',
       context.workRuleSet,
       buckets,
+      money(context.ytd.sutaWages),
       context.employer.sutaRate,
     );
 

@@ -118,7 +118,7 @@ function ruleSetWithBothEmployerRateKeysResolved(): ResolvedStateRuleSet {
 
 describe('calculateSutaEmployer — positive path', () => {
   it('computes sutaWages x employer.sutaRate', () => {
-    const result = calculateSutaEmployer(uncappedRuleSet(), money('50000'), '0.05');
+    const result = calculateSutaEmployer(uncappedRuleSet(), money('50000'), money('0'), '0.05');
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(toStorageString(result.value.amount)).toBe('2500');
@@ -126,7 +126,7 @@ describe('calculateSutaEmployer — positive path', () => {
 
   it('treats 0.05 as 5%, never 0.05%', () => {
     // A 0.05% misinterpretation would compute 50000 * 0.0005 = 25, not 2500.
-    const result = calculateSutaEmployer(uncappedRuleSet(), money('50000'), '0.05');
+    const result = calculateSutaEmployer(uncappedRuleSet(), money('50000'), money('0'), '0.05');
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(toStorageString(result.value.amount)).toBe('2500');
@@ -134,14 +134,14 @@ describe('calculateSutaEmployer — positive path', () => {
   });
 
   it('zero SUTA wages yields zero, never a fabricated non-zero amount', () => {
-    const result = calculateSutaEmployer(uncappedRuleSet(), money('0'), '0.034');
+    const result = calculateSutaEmployer(uncappedRuleSet(), money('0'), money('0'), '0.034');
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(toStorageString(result.value.amount)).toBe('0');
   });
 
   it('is precision-sensitive: no silent truncation or rounding', () => {
-    const result = calculateSutaEmployer(uncappedRuleSet(), money('1234.56'), '0.0072');
+    const result = calculateSutaEmployer(uncappedRuleSet(), money('1234.56'), money('0'), '0.0072');
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(toStorageString(result.value.amount)).toBe('8.888832');
@@ -149,14 +149,14 @@ describe('calculateSutaEmployer — positive path', () => {
 
   it('is deterministic: identical inputs produce an identical result on repeated calls', () => {
     const ruleSet = uncappedRuleSet();
-    const first = calculateSutaEmployer(ruleSet, money('842.17'), '0.0075');
-    const second = calculateSutaEmployer(ruleSet, money('842.17'), '0.0075');
+    const first = calculateSutaEmployer(ruleSet, money('842.17'), money('0'), '0.0075');
+    const second = calculateSutaEmployer(ruleSet, money('842.17'), money('0'), '0.0075');
     expect(first).toEqual(second);
   });
 
   it('does not use JavaScript floating-point arithmetic for the calculation', () => {
     expect(19.9 * 0.01).not.toBe(0.199);
-    const result = calculateSutaEmployer(uncappedRuleSet(), money('19.9'), '0.01');
+    const result = calculateSutaEmployer(uncappedRuleSet(), money('19.9'), money('0'), '0.01');
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(toStorageString(result.value.amount)).toBe('0.199');
@@ -165,7 +165,7 @@ describe('calculateSutaEmployer — positive path', () => {
 
 describe('missing employer.sutaRate — SCENARIO_UNSUPPORTED, never a fallback', () => {
   it('reports SCENARIO_UNSUPPORTED when employer.sutaRate is undefined', () => {
-    const result = calculateSutaEmployer(uncappedRuleSet(), money('50000'), undefined);
+    const result = calculateSutaEmployer(uncappedRuleSet(), money('50000'), money('0'), undefined);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.problem.reason).toBe('SCENARIO_UNSUPPORTED');
@@ -175,6 +175,7 @@ describe('missing employer.sutaRate — SCENARIO_UNSUPPORTED, never a fallback',
     const result = calculateSutaEmployer(
       ruleSetWithBothEmployerRateKeysResolved(),
       money('50000'),
+      money('0'),
       undefined,
     );
     expect(result.ok).toBe(false);
@@ -189,6 +190,7 @@ describe('missing employer.sutaRate — SCENARIO_UNSUPPORTED, never a fallback',
     const result = calculateSutaEmployer(
       ruleSetWithBothEmployerRateKeysResolved(),
       money('50000'),
+      money('0'),
       undefined,
     );
     expect(result.ok).toBe(false);
@@ -203,6 +205,7 @@ describe('missing employer.sutaRate — SCENARIO_UNSUPPORTED, never a fallback',
       const result = calculateSutaEmployer(
         ruleSetWithBothEmployerRateKeysResolved(),
         money('50000'),
+        money('0'),
         '0.05',
       );
       expect(result.ok).toBe(true);
@@ -215,35 +218,62 @@ describe('missing employer.sutaRate — SCENARIO_UNSUPPORTED, never a fallback',
   );
 });
 
-describe('wage base — applied only when the data says there is no cap', () => {
+describe('wage base — YTD-aware capping (DM-03 wage-base YTD wiring)', () => {
   it('NOT_APPLICABLE: full sutaWages used, COMPLETE', () => {
-    const result = calculateSutaEmployer(uncappedRuleSet(), money('5000'), '0.01');
+    const result = calculateSutaEmployer(uncappedRuleSet(), money('5000'), money('0'), '0.01');
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(toStorageString(result.value.amount)).toBe('50');
   });
 
+  it('APPLIES with zero YTD: capped against the full annual base, never SCENARIO_UNSUPPORTED', () => {
+    const ruleSet = buildRuleSet({
+      [StateRuleKey.SUTA_WAGE_BASE]: availableEntry(
+        StateRuleKey.SUTA_WAGE_BASE,
+        wageBaseDetail('APPLIES', '1000'),
+      ),
+    });
+    const result = calculateSutaEmployer(ruleSet, money('5000'), money('0'), '0.05');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // remaining = max(1000 - 0, 0) = 1000; taxable = min(5000, 1000) = 1000.
+    expect(toStorageString(result.value.amount)).toBe('50');
+  });
+
   it(
-    'APPLIES with a real amount: SCENARIO_UNSUPPORTED — this engine has no year-to-date wage ' +
-      'tracking to enforce it, identical to the employee side',
+    'APPLIES with YTD SUTA wages (StateYtd.sutaWages) already consuming most of the base: ' +
+      'only the remaining base is taxed this period',
     () => {
       const ruleSet = buildRuleSet({
         [StateRuleKey.SUTA_WAGE_BASE]: availableEntry(
           StateRuleKey.SUTA_WAGE_BASE,
-          wageBaseDetail('APPLIES', '7000'),
+          wageBaseDetail('APPLIES', '1000'),
         ),
       });
-      const result = calculateSutaEmployer(ruleSet, money('5000'), '0.05');
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
-      expect(result.problem.reason).toBe('SCENARIO_UNSUPPORTED');
-      expect(result.problem.ruleKey).toBe(StateRuleKey.SUTA_WAGE_BASE);
+      const result = calculateSutaEmployer(ruleSet, money('5000'), money('900'), '0.1');
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      // remaining = max(1000 - 900, 0) = 100; taxable = min(5000, 100) = 100.
+      expect(toStorageString(result.value.amount)).toBe('10');
     },
   );
 
+  it('APPLIES with YTD already at or above the base: taxable wages floor at zero, never negative', () => {
+    const ruleSet = buildRuleSet({
+      [StateRuleKey.SUTA_WAGE_BASE]: availableEntry(
+        StateRuleKey.SUTA_WAGE_BASE,
+        wageBaseDetail('APPLIES', '1000'),
+      ),
+    });
+    const result = calculateSutaEmployer(ruleSet, money('5000'), money('1500'), '0.05');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(toStorageString(result.value.amount)).toBe('0');
+  });
+
   it('missing SUTA_WAGE_BASE rule entirely fails RULE_MISSING, never treated as "no cap"', () => {
     const ruleSet = buildRuleSet({});
-    const result = calculateSutaEmployer(ruleSet, money('5000'), '0.05');
+    const result = calculateSutaEmployer(ruleSet, money('5000'), money('0'), '0.05');
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.problem.reason).toBe('RULE_MISSING');
@@ -257,7 +287,7 @@ describe('wage base — applied only when the data says there is no cap', () => 
         { verificationStatus: 'PENDING' },
       ),
     });
-    const result = calculateSutaEmployer(ruleSet, money('5000'), '0.05');
+    const result = calculateSutaEmployer(ruleSet, money('5000'), money('0'), '0.05');
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.problem.reason).toBe('RULE_UNVERIFIED');
@@ -265,7 +295,7 @@ describe('wage base — applied only when the data says there is no cap', () => 
 
   it('wage-base failure surfaces even when employer.sutaRate is absent too — wage base is checked first', () => {
     const ruleSet = buildRuleSet({});
-    const result = calculateSutaEmployer(ruleSet, money('5000'), undefined);
+    const result = calculateSutaEmployer(ruleSet, money('5000'), money('0'), undefined);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.problem.reason).toBe('RULE_MISSING');
@@ -274,21 +304,26 @@ describe('wage base — applied only when the data says there is no cap', () => 
 
 describe('invalid employer.sutaRate — explicit failure, no silent coercion', () => {
   it('a malformed decimal string reports INPUT_INVALID', () => {
-    const result = calculateSutaEmployer(uncappedRuleSet(), money('5000'), 'not-a-number');
+    const result = calculateSutaEmployer(
+      uncappedRuleSet(),
+      money('5000'),
+      money('0'),
+      'not-a-number',
+    );
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.problem.reason).toBe('INPUT_INVALID');
   });
 
   it('a string with two decimal points reports INPUT_INVALID', () => {
-    const result = calculateSutaEmployer(uncappedRuleSet(), money('5000'), '0.05.5');
+    const result = calculateSutaEmployer(uncappedRuleSet(), money('5000'), money('0'), '0.05.5');
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.problem.reason).toBe('INPUT_INVALID');
   });
 
   it('an empty string reports INPUT_INVALID, never treated as zero or absent', () => {
-    const result = calculateSutaEmployer(uncappedRuleSet(), money('5000'), '');
+    const result = calculateSutaEmployer(uncappedRuleSet(), money('5000'), money('0'), '');
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.problem.reason).toBe('INPUT_INVALID');
@@ -297,7 +332,7 @@ describe('invalid employer.sutaRate — explicit failure, no silent coercion', (
 
 describe('provenance', () => {
   it('includes the wage-base rule reference when the calculation succeeds', () => {
-    const result = calculateSutaEmployer(uncappedRuleSet(), money('50000'), '0.05');
+    const result = calculateSutaEmployer(uncappedRuleSet(), money('50000'), money('0'), '0.05');
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const ruleKeys = result.value.rules.map((r) => r.ruleKey);
@@ -305,7 +340,7 @@ describe('provenance', () => {
   });
 
   it('never fabricates a reference when the calculation itself fails', () => {
-    const result = calculateSutaEmployer(uncappedRuleSet(), money('50000'), undefined);
+    const result = calculateSutaEmployer(uncappedRuleSet(), money('50000'), money('0'), undefined);
     expect(result.ok).toBe(false);
   });
 });

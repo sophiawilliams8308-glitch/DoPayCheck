@@ -17,10 +17,13 @@ import { StateRuleKey } from '@/lib/tax/state/ruleKeys';
  * Fixtures reuse the exact conventions `tests/unit/state-wage-base.test.ts`
  * already established (reserved TEST jurisdiction/source ids, no real tax
  * value). Only established repository behavior is asserted: the wage base
- * IS applied when NOT_APPLICABLE (no cap), and reports SCENARIO_UNSUPPORTED
- * — never a fabricated capped amount — when a real cap resolves APPLIES,
- * since this engine has no year-to-date wage tracking. No speculative cap
- * arithmetic is tested.
+ * IS applied when NOT_APPLICABLE (no cap), and — since the DM-03 wage-base
+ * YTD wiring — is now correctly capped against the remaining annual base
+ * (`remaining = max(base - ytdWages, 0)`) when a real cap resolves APPLIES,
+ * using the caller-supplied `ytdWages` (this employer's `StateYtd.sdiWages`,
+ * excluding the current period). Tests not specifically about YTD pass
+ * `money('0')` for `ytdWages`, which reduces to the original single-period
+ * clamp.
  */
 
 const JURISDICTION_CODE = 'TEST-SDI';
@@ -118,14 +121,18 @@ function uncappedEmployerRuleSet(rate = '0.009'): ResolvedStateRuleSet {
 
 describe('calculateSdiEmployee — positive path', () => {
   it('computes taxable SDI wages x resolved SDI employee rate', () => {
-    const result = calculateSdiEmployee(uncappedEmployeeRuleSet('0.009'), money('50000'));
+    const result = calculateSdiEmployee(
+      uncappedEmployeeRuleSet('0.009'),
+      money('50000'),
+      money('0'),
+    );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(toStorageString(result.value.amount)).toBe('450');
   });
 
   it('zero SDI wages yields zero, never a fabricated non-zero amount', () => {
-    const result = calculateSdiEmployee(uncappedEmployeeRuleSet('0.009'), money('0'));
+    const result = calculateSdiEmployee(uncappedEmployeeRuleSet('0.009'), money('0'), money('0'));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(toStorageString(result.value.amount)).toBe('0');
@@ -142,7 +149,7 @@ describe('calculateSdiEmployee — positive path', () => {
         rateDetail('0.9', 'PERCENT', 'EMPLOYEE'),
       ),
     });
-    const result = calculateSdiEmployee(ruleSet, money('50000'));
+    const result = calculateSdiEmployee(ruleSet, money('50000'), money('0'));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     // 0.9% == 0.009 as a decimal fraction, same as the DECIMAL_FRACTION case.
@@ -150,7 +157,11 @@ describe('calculateSdiEmployee — positive path', () => {
   });
 
   it('is precision-sensitive: no silent truncation or rounding', () => {
-    const result = calculateSdiEmployee(uncappedEmployeeRuleSet('0.0086'), money('1234.56'));
+    const result = calculateSdiEmployee(
+      uncappedEmployeeRuleSet('0.0086'),
+      money('1234.56'),
+      money('0'),
+    );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(toStorageString(result.value.amount)).toBe('10.617216');
@@ -158,14 +169,14 @@ describe('calculateSdiEmployee — positive path', () => {
 
   it('is deterministic: identical inputs produce an identical result on repeated calls', () => {
     const ruleSet = uncappedEmployeeRuleSet('0.0075');
-    const first = calculateSdiEmployee(ruleSet, money('842.17'));
-    const second = calculateSdiEmployee(ruleSet, money('842.17'));
+    const first = calculateSdiEmployee(ruleSet, money('842.17'), money('0'));
+    const second = calculateSdiEmployee(ruleSet, money('842.17'), money('0'));
     expect(first).toEqual(second);
   });
 
   it('does not use JavaScript floating-point arithmetic for the calculation', () => {
     expect(19.9 * 0.01).not.toBe(0.199);
-    const result = calculateSdiEmployee(uncappedEmployeeRuleSet('0.01'), money('19.9'));
+    const result = calculateSdiEmployee(uncappedEmployeeRuleSet('0.01'), money('19.9'), money('0'));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(toStorageString(result.value.amount)).toBe('0.199');
@@ -174,47 +185,86 @@ describe('calculateSdiEmployee — positive path', () => {
 
 describe('calculateSdiEmployer — mirrors the employee path on the employer rate', () => {
   it('computes taxable SDI wages x resolved SDI employer rate', () => {
-    const result = calculateSdiEmployer(uncappedEmployerRuleSet('0.012'), money('2000'));
+    const result = calculateSdiEmployer(
+      uncappedEmployerRuleSet('0.012'),
+      money('2000'),
+      money('0'),
+    );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(toStorageString(result.value.amount)).toBe('24');
   });
 
   it('an employee-only rule set has no employer rate, so the employer side fails RULE_MISSING', () => {
-    const result = calculateSdiEmployer(uncappedEmployeeRuleSet(), money('2000'));
+    const result = calculateSdiEmployer(uncappedEmployeeRuleSet(), money('2000'), money('0'));
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.problem.reason).toBe('RULE_MISSING');
   });
 });
 
-describe('wage base — applied only when the data says there is no cap', () => {
+describe('wage base — YTD-aware capping (DM-03 wage-base YTD wiring)', () => {
   it('NOT_APPLICABLE: proceeds uncapped, COMPLETE', () => {
-    const result = calculateSdiEmployee(uncappedEmployeeRuleSet('0.01'), money('5000'));
+    const result = calculateSdiEmployee(uncappedEmployeeRuleSet('0.01'), money('5000'), money('0'));
     expect(result.ok).toBe(true);
   });
 
+  it('APPLIES with zero YTD: capped against the full annual base, never SCENARIO_UNSUPPORTED', () => {
+    const ruleSet = buildRuleSet({
+      [StateRuleKey.SDI_WAGE_BASE]: availableEntry(
+        StateRuleKey.SDI_WAGE_BASE,
+        wageBaseDetail('APPLIES', '1000'),
+      ),
+      [StateRuleKey.SDI_EMPLOYEE_RATE]: availableEntry(
+        StateRuleKey.SDI_EMPLOYEE_RATE,
+        rateDetail('0.009', 'DECIMAL_FRACTION', 'EMPLOYEE'),
+      ),
+    });
+    const result = calculateSdiEmployee(ruleSet, money('5000'), money('0'));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // remaining = max(1000 - 0, 0) = 1000; taxable = min(5000, 1000) = 1000.
+    expect(toStorageString(result.value.amount)).toBe('9');
+  });
+
   it(
-    'APPLIES with a real amount: SCENARIO_UNSUPPORTED, never a silently-capped or ' +
-      'silently-ignored amount — this engine has no year-to-date wage tracking to enforce it',
+    'APPLIES with YTD SDI wages (StateYtd.sdiWages) already consuming most of the base: ' +
+      'only the remaining base is taxed this period',
     () => {
       const ruleSet = buildRuleSet({
         [StateRuleKey.SDI_WAGE_BASE]: availableEntry(
           StateRuleKey.SDI_WAGE_BASE,
-          wageBaseDetail('APPLIES', '153164'),
+          wageBaseDetail('APPLIES', '1000'),
         ),
         [StateRuleKey.SDI_EMPLOYEE_RATE]: availableEntry(
           StateRuleKey.SDI_EMPLOYEE_RATE,
-          rateDetail('0.009', 'DECIMAL_FRACTION', 'EMPLOYEE'),
+          rateDetail('0.01', 'DECIMAL_FRACTION', 'EMPLOYEE'),
         ),
       });
-      const result = calculateSdiEmployee(ruleSet, money('5000'));
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
-      expect(result.problem.reason).toBe('SCENARIO_UNSUPPORTED');
-      expect(result.problem.ruleKey).toBe(StateRuleKey.SDI_WAGE_BASE);
+      const result = calculateSdiEmployee(ruleSet, money('5000'), money('900'));
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      // remaining = max(1000 - 900, 0) = 100; taxable = min(5000, 100) = 100.
+      expect(toStorageString(result.value.amount)).toBe('1');
     },
   );
+
+  it('APPLIES with YTD already at or above the base: taxable wages floor at zero, never negative', () => {
+    const ruleSet = buildRuleSet({
+      [StateRuleKey.SDI_WAGE_BASE]: availableEntry(
+        StateRuleKey.SDI_WAGE_BASE,
+        wageBaseDetail('APPLIES', '1000'),
+      ),
+      [StateRuleKey.SDI_EMPLOYEE_RATE]: availableEntry(
+        StateRuleKey.SDI_EMPLOYEE_RATE,
+        rateDetail('0.01', 'DECIMAL_FRACTION', 'EMPLOYEE'),
+      ),
+    });
+    const result = calculateSdiEmployee(ruleSet, money('5000'), money('1500'));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(toStorageString(result.value.amount)).toBe('0');
+  });
 
   it('missing SDI_WAGE_BASE rule entirely fails RULE_MISSING, never treated as "no cap"', () => {
     const ruleSet = buildRuleSet({
@@ -223,7 +273,7 @@ describe('wage base — applied only when the data says there is no cap', () => 
         rateDetail('0.009', 'DECIMAL_FRACTION', 'EMPLOYEE'),
       ),
     });
-    const result = calculateSdiEmployee(ruleSet, money('5000'));
+    const result = calculateSdiEmployee(ruleSet, money('5000'), money('0'));
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.problem.reason).toBe('RULE_MISSING');
@@ -241,7 +291,7 @@ describe('wage base — applied only when the data says there is no cap', () => 
         rateDetail('0.009', 'DECIMAL_FRACTION', 'EMPLOYEE'),
       ),
     });
-    const result = calculateSdiEmployee(ruleSet, money('5000'));
+    const result = calculateSdiEmployee(ruleSet, money('5000'), money('0'));
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.problem.reason).toBe('RULE_UNVERIFIED');
@@ -260,7 +310,7 @@ describe('rate applicability and appliesTo — consulted, never assumed', () => 
         rateDetail(null, 'DECIMAL_FRACTION', 'EMPLOYEE', 'NOT_APPLICABLE'),
       ),
     });
-    const result = calculateSdiEmployee(ruleSet, money('5000'));
+    const result = calculateSdiEmployee(ruleSet, money('5000'), money('0'));
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.problem.reason).toBe('SCENARIO_UNSUPPORTED');
@@ -280,7 +330,7 @@ describe('rate applicability and appliesTo — consulted, never assumed', () => 
           rateDetail('0.009', 'DECIMAL_FRACTION', 'EMPLOYER'),
         ),
       });
-      const result = calculateSdiEmployee(ruleSet, money('5000'));
+      const result = calculateSdiEmployee(ruleSet, money('5000'), money('0'));
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.problem.reason).toBe('SCENARIO_UNSUPPORTED');
@@ -298,7 +348,7 @@ describe('rate applicability and appliesTo — consulted, never assumed', () => 
         rateDetail(null, 'DECIMAL_FRACTION', 'EMPLOYEE'),
       ),
     });
-    const result = calculateSdiEmployee(ruleSet, money('5000'));
+    const result = calculateSdiEmployee(ruleSet, money('5000'), money('0'));
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.problem.reason).toBe('COMPONENT_NOT_STATED');
@@ -313,7 +363,7 @@ describe('missing/unverified/invalid SDI_EMPLOYEE_RATE — established readDetai
         wageBaseDetail('NOT_APPLICABLE'),
       ),
     });
-    const result = calculateSdiEmployee(ruleSet, money('5000'));
+    const result = calculateSdiEmployee(ruleSet, money('5000'), money('0'));
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.problem.reason).toBe('RULE_MISSING');
@@ -331,7 +381,7 @@ describe('missing/unverified/invalid SDI_EMPLOYEE_RATE — established readDetai
         { verificationStatus: 'PENDING' },
       ),
     });
-    const result = calculateSdiEmployee(ruleSet, money('5000'));
+    const result = calculateSdiEmployee(ruleSet, money('5000'), money('0'));
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.problem.reason).toBe('RULE_UNVERIFIED');
@@ -350,7 +400,7 @@ describe('missing/unverified/invalid SDI_EMPLOYEE_RATE — established readDetai
         applicability: 'APPLIES',
       }),
     });
-    const result = calculateSdiEmployee(ruleSet, money('5000'));
+    const result = calculateSdiEmployee(ruleSet, money('5000'), money('0'));
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.problem.reason).toBe('RULE_DETAIL_INVALID');
@@ -360,7 +410,7 @@ describe('missing/unverified/invalid SDI_EMPLOYEE_RATE — established readDetai
 describe('provenance', () => {
   it('merges the wage-base and rate rule references, deduplicated', () => {
     const ruleSet = uncappedEmployeeRuleSet('0.009');
-    const result = calculateSdiEmployee(ruleSet, money('50000'));
+    const result = calculateSdiEmployee(ruleSet, money('50000'), money('0'));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const ruleKeys = result.value.rules.map((r) => r.ruleKey).sort();
@@ -371,7 +421,7 @@ describe('provenance', () => {
 
   it('never fabricates a reference when the calculation itself fails', () => {
     const ruleSet = buildRuleSet({});
-    const result = calculateSdiEmployee(ruleSet, money('5000'));
+    const result = calculateSdiEmployee(ruleSet, money('5000'), money('0'));
     expect(result.ok).toBe(false);
   });
 });

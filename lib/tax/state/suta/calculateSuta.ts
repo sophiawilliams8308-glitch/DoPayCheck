@@ -67,18 +67,19 @@ import type { DecimalString } from '../types';
  * ===========================================================================
  *
  * ===========================================================================
- * WAGE BASE: APPLIED ONLY WHEN THE DATA SAYS THERE ISN'T ONE.
+ * WAGE BASE: YTD-AWARE (DM-03 wage-base YTD wiring).
  *
  * Identical reasoning to `calculateSdi.ts`/`calculatePfml.ts`, re-verified
- * for SUTA: `StateCalculationContext` carries no YTD wages field, and
- * `applyStateWageBase()` is a documented current-input-only clamp, not a
- * YTD tracker. So:
+ * for SUTA: `applyStateWageBase()` now consumes the caller-supplied
+ * `StateCalculationContext.ytd.sutaWages` — wages from this employer,
+ * EXCLUDING the current pay period, per `StateYtd`'s own established
+ * convention — to compute `remaining = max(base - ytdWages, 0)` before
+ * clamping the current period's wages against it:
  *
  *   SUTA_WAGE_BASE resolves NOT_APPLICABLE -> no cap exists; proceed uncapped.
- *   SUTA_WAGE_BASE resolves APPLIES        -> a real cap exists that this
- *                                              engine cannot yet enforce ->
- *                                              SCENARIO_UNSUPPORTED (an
- *                                              EXISTING StateReason).
+ *   SUTA_WAGE_BASE resolves APPLIES        -> capped correctly against the
+ *                                              remaining annual base, using
+ *                                              the supplied YTD figure.
  *   SUTA_WAGE_BASE rule missing/unverified/invalid -> that failure, verbatim.
  *
  * There is no `SUTA_MAX_CONTRIBUTION` key at all (confirmed directly against
@@ -118,23 +119,11 @@ function ruleReference(
 function resolveSutaTaxableWages(
   ruleSet: ResolvedStateRuleSet,
   sutaWages: Money,
+  ytdWages: Money,
 ): Read<{ readonly applicableWages: Money; readonly reference: RuleReference | undefined }> {
-  const wageBase = applyStateWageBase(ruleSet, StateRuleKey.SUTA_WAGE_BASE, sutaWages);
+  const wageBase = applyStateWageBase(ruleSet, StateRuleKey.SUTA_WAGE_BASE, sutaWages, ytdWages);
   if (!wageBase.ok) {
     return readFail(wageBase.problem);
-  }
-
-  if (wageBase.value.wageBase !== null) {
-    return readFail(
-      stateUnavailable(
-        StateReason.SCENARIO_UNSUPPORTED,
-        'STATE.SUTA.WAGE_BASE resolves APPLIES with a real cap, but this engine has no ' +
-          'year-to-date wage tracking to enforce an annual cap correctly across pay periods; ' +
-          'a single-period clamp against the full annual base would misrepresent the ' +
-          'calculation, so this scenario is not yet supported',
-        StateRuleKey.SUTA_WAGE_BASE,
-      ),
-    );
   }
 
   return readOk({
@@ -144,14 +133,14 @@ function resolveSutaTaxableWages(
 }
 
 /** SUTA employee contribution for this pay period, from already-resolved
- * SUTA wages. The employer side is a disclosed, unimplemented contract gap
- * — see this module's own doc comment — and has no counterpart function
- * here. */
+ * SUTA wages and this employer's YTD SUTA wages (`StateYtd.sutaWages`,
+ * excluding the current period). */
 export function calculateSutaEmployee(
   ruleSet: ResolvedStateRuleSet,
   sutaWages: Money,
+  ytdWages: Money,
 ): Read<SutaContribution> {
-  const taxable = resolveSutaTaxableWages(ruleSet, sutaWages);
+  const taxable = resolveSutaTaxableWages(ruleSet, sutaWages, ytdWages);
   if (!taxable.ok) {
     return readFail(taxable.problem);
   }
@@ -214,9 +203,10 @@ export function calculateSutaEmployee(
 export function calculateSutaEmployer(
   ruleSet: ResolvedStateRuleSet,
   sutaWages: Money,
+  ytdWages: Money,
   employerSutaRate: DecimalString | undefined,
 ): Read<SutaContribution> {
-  const taxable = resolveSutaTaxableWages(ruleSet, sutaWages);
+  const taxable = resolveSutaTaxableWages(ruleSet, sutaWages, ytdWages);
   if (!taxable.ok) {
     return readFail(taxable.problem);
   }

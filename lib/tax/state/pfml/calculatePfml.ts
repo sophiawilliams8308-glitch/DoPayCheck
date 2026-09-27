@@ -36,23 +36,25 @@ import { StateRuleKey } from '../ruleKeys';
  * ===========================================================================
  *
  * ===========================================================================
- * WAGE BASE: APPLIED ONLY WHEN THE DATA SAYS THERE ISN'T ONE.
+ * WAGE BASE: YTD-AWARE (DM-03 wage-base YTD wiring).
  *
  * Identical reasoning to `calculateSdi.ts`, re-verified for PFML:
- * `StateCalculationContext` carries no YTD wages field, and
- * `applyStateWageBase()` is a documented current-input-only clamp, not a
- * YTD tracker. So:
+ * `applyStateWageBase()` now consumes the caller-supplied
+ * `StateCalculationContext.ytd.pfmlWages` — wages from this employer,
+ * EXCLUDING the current pay period, per `StateYtd`'s own established
+ * convention — to compute `remaining = max(base - ytdWages, 0)` before
+ * clamping the current period's wages against it:
  *
  *   PFML_WAGE_BASE resolves NOT_APPLICABLE -> no cap exists; proceed uncapped.
- *   PFML_WAGE_BASE resolves APPLIES        -> a real cap exists that this
- *                                              engine cannot yet enforce ->
- *                                              SCENARIO_UNSUPPORTED (an
- *                                              EXISTING StateReason).
+ *   PFML_WAGE_BASE resolves APPLIES        -> capped correctly against the
+ *                                              remaining annual base, using
+ *                                              the supplied YTD figure.
  *   PFML_WAGE_BASE rule missing/unverified/invalid -> that failure, verbatim.
  *
- * `PFML_MAX_CONTRIBUTION` (`stateThresholdDetailSchema`) has the identical
- * YTD problem and NO existing reader/primitive anywhere in the repository —
- * left entirely unread here, a deferred item.
+ * `PFML_MAX_CONTRIBUTION` (`stateThresholdDetailSchema`) is a different,
+ * still-deferred concern (a contribution-total cap, not a wage-base cap) —
+ * it has NO existing reader/primitive anywhere in the repository and
+ * remains entirely unread here; this wiring does not extend to it.
  * ===========================================================================
  *
  * ===========================================================================
@@ -94,23 +96,11 @@ function ruleReference(
 function resolvePfmlTaxableWages(
   ruleSet: ResolvedStateRuleSet,
   pfmlWages: Money,
+  ytdWages: Money,
 ): Read<{ readonly applicableWages: Money; readonly reference: RuleReference | undefined }> {
-  const wageBase = applyStateWageBase(ruleSet, StateRuleKey.PFML_WAGE_BASE, pfmlWages);
+  const wageBase = applyStateWageBase(ruleSet, StateRuleKey.PFML_WAGE_BASE, pfmlWages, ytdWages);
   if (!wageBase.ok) {
     return readFail(wageBase.problem);
-  }
-
-  if (wageBase.value.wageBase !== null) {
-    return readFail(
-      stateUnavailable(
-        StateReason.SCENARIO_UNSUPPORTED,
-        'STATE.PFML.WAGE_BASE resolves APPLIES with a real cap, but this engine has no ' +
-          'year-to-date wage tracking to enforce an annual cap correctly across pay periods; ' +
-          'a single-period clamp against the full annual base would misrepresent the ' +
-          'calculation, so this scenario is not yet supported',
-        StateRuleKey.PFML_WAGE_BASE,
-      ),
-    );
   }
 
   return readOk({
@@ -122,10 +112,11 @@ function resolvePfmlTaxableWages(
 function calculatePfmlSide(
   ruleSet: ResolvedStateRuleSet,
   pfmlWages: Money,
+  ytdWages: Money,
   rateRuleKey: typeof StateRuleKey.PFML_EMPLOYEE_RATE | typeof StateRuleKey.PFML_EMPLOYER_RATE,
   expectedSide: 'EMPLOYEE' | 'EMPLOYER',
 ): Read<PfmlContribution> {
-  const taxable = resolvePfmlTaxableWages(ruleSet, pfmlWages);
+  const taxable = resolvePfmlTaxableWages(ruleSet, pfmlWages, ytdWages);
   if (!taxable.ok) {
     return readFail(taxable.problem);
   }
@@ -173,18 +164,36 @@ function calculatePfmlSide(
   });
 }
 
-/** PFML employee contribution for this pay period, from already-resolved PFML wages. */
+/** PFML employee contribution for this pay period, from already-resolved
+ * PFML wages and this employer's YTD PFML wages (`StateYtd.pfmlWages`,
+ * excluding the current period). */
 export function calculatePfmlEmployee(
   ruleSet: ResolvedStateRuleSet,
   pfmlWages: Money,
+  ytdWages: Money,
 ): Read<PfmlContribution> {
-  return calculatePfmlSide(ruleSet, pfmlWages, StateRuleKey.PFML_EMPLOYEE_RATE, 'EMPLOYEE');
+  return calculatePfmlSide(
+    ruleSet,
+    pfmlWages,
+    ytdWages,
+    StateRuleKey.PFML_EMPLOYEE_RATE,
+    'EMPLOYEE',
+  );
 }
 
-/** PFML employer contribution for this pay period, from already-resolved PFML wages. */
+/** PFML employer contribution for this pay period, from already-resolved
+ * PFML wages and this employer's YTD PFML wages (`StateYtd.pfmlWages`,
+ * excluding the current period). */
 export function calculatePfmlEmployer(
   ruleSet: ResolvedStateRuleSet,
   pfmlWages: Money,
+  ytdWages: Money,
 ): Read<PfmlContribution> {
-  return calculatePfmlSide(ruleSet, pfmlWages, StateRuleKey.PFML_EMPLOYER_RATE, 'EMPLOYER');
+  return calculatePfmlSide(
+    ruleSet,
+    pfmlWages,
+    ytdWages,
+    StateRuleKey.PFML_EMPLOYER_RATE,
+    'EMPLOYER',
+  );
 }
