@@ -1190,3 +1190,34 @@ describe('DM-03 Slice 42 scope — component applicability representation only, 
     expect(indexSource).not.toMatch(/StateComponentApplicability\.NOT_APPLICABLE/);
   });
 });
+
+describe('CAPABILITY_DATA_INCOMPLETE scope — taxonomy only, no CAPABILITY_DECLARATION wiring', () => {
+  it('no production state code produces CAPABILITY_DATA_INCOMPLETE yet', () => {
+    // The reason exists for a future, separately-authorized orchestration
+    // (D1/D2/D6/O2 remain unresolved, per the DM-03 architecture-decision
+    // slices). No caller may start producing it until that orchestration is
+    // itself authorized and implemented.
+    for (const file of stateFiles()) {
+      if (file.rel.endsWith('errors/stateErrors.ts')) {
+        continue; // the declaration itself, not a production use
+      }
+      expect(code(file.text), file.rel).not.toMatch(/StateReason\.CAPABILITY_DATA_INCOMPLETE/);
+    }
+  });
+
+  it('no production state code reads CAPABILITY_DECLARATION or a dataComplete field', () => {
+    for (const file of stateFiles()) {
+      if (file.rel.endsWith('rules/detailSchemas.ts') || file.rel.endsWith('ruleKeys.ts')) {
+        continue; // schema/rule-key registration, not a reader
+      }
+      const source = code(file.text);
+      expect(source, file.rel).not.toMatch(
+        /readDetail\(ruleSet, StateRuleKey\.CAPABILITY_DECLARATION\)/,
+      );
+      expect(source, file.rel).not.toMatch(
+        /stateRule\(ruleSet, StateRuleKey\.CAPABILITY_DECLARATION\)/,
+      );
+      expect(source, file.rel).not.toMatch(/\.dataComplete\b/);
+    }
+  });
+});

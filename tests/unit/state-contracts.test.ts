@@ -121,6 +121,60 @@ describe('failure taxonomy', () => {
   });
 });
 
+describe('CAPABILITY_DATA_INCOMPLETE — declaration-level data incompleteness', () => {
+  it('Test 1 — the reason exists with its exact string value', () => {
+    expect(StateReason.CAPABILITY_DATA_INCOMPLETE).toBe('CAPABILITY_DATA_INCOMPLETE');
+  });
+
+  it('Test 2 — maps to CalculationStatus.INCOMPLETE via the existing mapping mechanism', () => {
+    expect(statusForStateReason(StateReason.CAPABILITY_DATA_INCOMPLETE)).toBe('INCOMPLETE');
+  });
+
+  it('Test 3 — remains distinct from CAPABILITY_NOT_DECLARED', () => {
+    expect(StateReason.CAPABILITY_DATA_INCOMPLETE).not.toBe(StateReason.CAPABILITY_NOT_DECLARED);
+    // Both happen to map to the same status, but the reason codes themselves
+    // must never be aliased -- CAPABILITY_NOT_DECLARED means no declaration
+    // exists at all; CAPABILITY_DATA_INCOMPLETE means one exists and says
+    // APPLICABLE with dataComplete=false. Different facts, same status family.
+    expect(statusForStateReason(StateReason.CAPABILITY_NOT_DECLARED)).toBe(
+      statusForStateReason(StateReason.CAPABILITY_DATA_INCOMPLETE),
+    );
+  });
+
+  it('Test 4 — is not aliased to RULE_MISSING', () => {
+    expect(StateReason.CAPABILITY_DATA_INCOMPLETE).not.toBe(StateReason.RULE_MISSING);
+  });
+
+  it('Test 5 — is not aliased to RULE_UNVERIFIED', () => {
+    expect(StateReason.CAPABILITY_DATA_INCOMPLETE).not.toBe(StateReason.RULE_UNVERIFIED);
+  });
+
+  it('Test 6 — is not aliased to SCENARIO_UNSUPPORTED', () => {
+    expect(StateReason.CAPABILITY_DATA_INCOMPLETE).not.toBe(StateReason.SCENARIO_UNSUPPORTED);
+    expect(statusForStateReason(StateReason.CAPABILITY_DATA_INCOMPLETE)).not.toBe(
+      statusForStateReason(StateReason.SCENARIO_UNSUPPORTED),
+    );
+  });
+
+  it('Test 7 — introduces no new CalculationStatus member', () => {
+    // The full StateReason vocabulary maps onto exactly the pre-existing
+    // six-member CalculationStatus set -- adding this reason changed no
+    // status, and produced no seventh value.
+    const statuses = new Set(
+      Object.values(StateReason).map((reason) => statusForStateReason(reason)),
+    );
+    expect([...statuses].sort()).toEqual(
+      [
+        'CALCULATION_ERROR',
+        'INCOMPLETE',
+        'INVALID_INPUT',
+        'RULE_CONFLICT',
+        'UNSUPPORTED_SCENARIO',
+      ].sort(),
+    );
+  });
+});
+
 describe('state component applicability — DM-03 Slice 42', () => {
   function amount(overrides: Partial<StateAmount> = {}): StateAmount {
     return {

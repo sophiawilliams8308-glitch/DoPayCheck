@@ -28,6 +28,21 @@ export const StateReason = {
   TAXABILITY_NOT_STATED: 'TAXABILITY_NOT_STATED',
   /** The jurisdiction has no capability declaration, so coverage is unknown. */
   CAPABILITY_NOT_DECLARED: 'CAPABILITY_NOT_DECLARED',
+  /**
+   * A `CAPABILITY_DECLARATION` rule was found and states the programme is
+   * APPLICABLE, but that programme's own `dataComplete` flag is false — the
+   * declaration's author has not yet asserted the data is ready to compute.
+   *
+   * Distinct from `CAPABILITY_NOT_DECLARED` (no declaration exists at all),
+   * `RULE_MISSING` (a specific expected rule could not be resolved),
+   * `RULE_UNVERIFIED` (a specific rule's verification status blocks use), and
+   * `SCENARIO_UNSUPPORTED` (an already-resolved scenario cannot be
+   * calculated) — this reason is produced only by the declaration's own
+   * stated incompleteness, never inferred from any of those other
+   * conditions. No caller produces this reason yet; it exists for a future,
+   * separately-authorized orchestration to use once wired.
+   */
+  CAPABILITY_DATA_INCOMPLETE: 'CAPABILITY_DATA_INCOMPLETE',
   /** A declared methodology exists but this engine build does not implement it. */
   METHOD_NOT_IMPLEMENTED: 'METHOD_NOT_IMPLEMENTED',
   FEATURE_DISABLED: 'FEATURE_DISABLED',
@@ -59,6 +74,7 @@ export function statusForStateReason(reason: StateReason): CalculationStatus {
     case StateReason.COMPONENT_NOT_STATED:
     case StateReason.TAXABILITY_NOT_STATED:
     case StateReason.CAPABILITY_NOT_DECLARED:
+    case StateReason.CAPABILITY_DATA_INCOMPLETE:
     case StateReason.PENDING_VERIFICATION:
       return 'INCOMPLETE';
   }
