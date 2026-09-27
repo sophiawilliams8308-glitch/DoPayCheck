@@ -1165,3 +1165,28 @@ describe('DM-03 Slice 32/33 scope — TABLE adjustment architecture (OPTION C), 
     );
   });
 });
+
+describe('DM-03 Slice 42 scope — component applicability representation only, no live NOT_APPLICABLE path', () => {
+  it('declares StateComponentApplicability as its own result-layer type, never an alias of rule-detail StateApplicability', () => {
+    const typesSource = code(readFileSync(join(STATE, 'types.ts'), 'utf8'));
+    expect(typesSource).toMatch(/StateComponentApplicability\s*=\s*\{/);
+    expect(typesSource).not.toMatch(/StateComponentApplicability\s*=\s*StateApplicability/);
+    expect(typesSource).not.toMatch(/import.*StateApplicability.*from.*detailSchemas/);
+  });
+
+  it('every production construction of a StateComponentResult states applicability explicitly', () => {
+    const indexSource = code(readFileSync(join(STATE, 'index.ts'), 'utf8'));
+    const componentLiterals = indexSource.match(/bucket:\s*'[a-zA-Z]+',\s*applicability:/g) ?? [];
+    // Every StateComponentResult literal pairs its `bucket` field with an
+    // `applicability` field immediately after — no literal is missing one.
+    const bucketFields = indexSource.match(/bucket:\s*'[a-zA-Z]+',/g) ?? [];
+    expect(bucketFields.length).toBeGreaterThan(0);
+    expect(componentLiterals).toHaveLength(bucketFields.length);
+  });
+
+  it('no production state code constructs a live NOT_APPLICABLE component yet (Slice 36 orchestration is a separate, later slice)', () => {
+    const indexSource = code(readFileSync(join(STATE, 'index.ts'), 'utf8'));
+    expect(indexSource).not.toMatch(/applicability:\s*'NOT_APPLICABLE'/);
+    expect(indexSource).not.toMatch(/StateComponentApplicability\.NOT_APPLICABLE/);
+  });
+});

@@ -835,6 +835,7 @@ export function calculateStateTaxes(
       role: 'WORK',
       amount: incomeTaxWithheld,
       bucket: 'stateIncomeTaxWages',
+      applicability: 'APPLICABLE',
     },
     {
       program: 'SDI',
@@ -842,6 +843,7 @@ export function calculateStateTaxes(
       role: 'WORK',
       amount: sdiEmployee,
       bucket: 'sdiWages',
+      applicability: 'APPLICABLE',
     },
     {
       program: 'PFML',
@@ -849,6 +851,7 @@ export function calculateStateTaxes(
       role: 'WORK',
       amount: pfmlEmployee,
       bucket: 'pfmlWages',
+      applicability: 'APPLICABLE',
     },
     {
       program: 'SUTA',
@@ -856,6 +859,7 @@ export function calculateStateTaxes(
       role: 'WORK',
       amount: sutaEmployee,
       bucket: 'sutaWages',
+      applicability: 'APPLICABLE',
     },
   ];
 
@@ -904,6 +908,7 @@ export function calculateStateTaxes(
         role: 'WORK',
         amount: sdiEmployer,
         bucket: 'sdiWages',
+        applicability: 'APPLICABLE',
       },
       {
         program: 'PFML',
@@ -911,6 +916,7 @@ export function calculateStateTaxes(
         role: 'WORK',
         amount: pfmlEmployer,
         bucket: 'pfmlWages',
+        applicability: 'APPLICABLE',
       },
       {
         program: 'SUTA',
@@ -918,6 +924,7 @@ export function calculateStateTaxes(
         role: 'WORK',
         amount: sutaEmployer,
         bucket: 'sutaWages',
+        applicability: 'APPLICABLE',
       },
     ];
 

@@ -157,6 +157,29 @@ export interface StateAmount {
   readonly rules: readonly RuleReference[];
 }
 
+/**
+ * Whether one component's programme applies at all, at the RESULT layer.
+ *
+ * Deliberately distinct from `StateApplicability` (`rules/detailSchemas.ts`),
+ * which describes a single rule DETAIL field's own applicability (e.g. a
+ * wage base or rate). This type describes the outcome of a whole component
+ * in `StateTaxResult` — a different layer, kept separate on purpose so the
+ * two concepts are never accidentally treated as the same thing.
+ *
+ * `NOT_APPLICABLE` here means the programme is authoritatively known not to
+ * apply to this jurisdiction/scenario — a positive, sourced fact, not a
+ * failure. It pairs with `status: 'COMPLETE'` and `amount: null` on the
+ * component's own `StateAmount`, never with a fabricated `'0'` and never
+ * with a `problem`. See `StateComponentResult.applicability`.
+ */
+export const StateComponentApplicability = {
+  APPLICABLE: 'APPLICABLE',
+  NOT_APPLICABLE: 'NOT_APPLICABLE',
+} as const;
+
+export type StateComponentApplicability =
+  (typeof StateComponentApplicability)[keyof typeof StateComponentApplicability];
+
 /** One programme's outcome, on one side of the payroll. */
 export interface StateComponentResult {
   readonly program: StateProgram;
@@ -165,6 +188,15 @@ export interface StateComponentResult {
   readonly amount: StateAmount;
   /** The bucket this component was computed on, for the trace. */
   readonly bucket: StateBucket;
+  /**
+   * Whether this programme applies here. Required, never defaulted: every
+   * caller must state one of the two values explicitly. `NOT_APPLICABLE` is
+   * not currently produced by any calculation path in this repository — no
+   * coverage/capability-declaration orchestration wires it up yet — but the
+   * representation exists so a future, evidence-backed source can supply it
+   * without changing this contract again.
+   */
+  readonly applicability: StateComponentApplicability;
 }
 
 /**

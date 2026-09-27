@@ -151,6 +151,26 @@ describe('calculateStateTaxes — basic shape', () => {
   });
 });
 
+describe('component applicability — DM-03 Slice 42', () => {
+  it('every component from a real calculation is explicitly APPLICABLE (Guard D)', () => {
+    // No coverage/capability-declaration orchestration exists yet (Slice 36),
+    // so every component `calculateStateTaxes()` produces today must be
+    // 'APPLICABLE' -- never 'NOT_APPLICABLE' by accident, and never omitted.
+    const result = calculateStateTaxes(
+      context({ workRuleSet: ruleSetFor(profileSet([])), includeEmployerTaxes: true }),
+      {},
+    );
+    expect(result.employee.components.length).toBeGreaterThan(0);
+    for (const component of result.employee.components) {
+      expect(component.applicability).toBe('APPLICABLE');
+    }
+    expect(result.employer).not.toBeNull();
+    for (const component of result.employer?.components ?? []) {
+      expect(component.applicability).toBe('APPLICABLE');
+    }
+  });
+});
+
 describe('resolver-backed wage buckets are populated', () => {
   it('all four buckets reflect real resolveTaxability()-derived amounts', () => {
     const detail = profileSet([

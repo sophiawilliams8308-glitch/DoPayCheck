@@ -22,6 +22,8 @@ import {
   SUPPORTED_WORK_JURISDICTION_COUNT,
   type AnnualAmount,
   type PerPeriodAmount,
+  type StateAmount,
+  type StateComponentResult,
   type StateEmployeeResult,
   type StateEmployerResult,
 } from '@/lib/tax/state/types';
@@ -116,6 +118,155 @@ describe('failure taxonomy', () => {
     expect(statusForStateReason(StateReason.RULE_CONFLICT)).toBe('RULE_CONFLICT');
     expect(statusForStateReason(StateReason.METHOD_NOT_IMPLEMENTED)).toBe('UNSUPPORTED_SCENARIO');
     expect(statusForStateReason(StateReason.INVARIANT_BREACH)).toBe('CALCULATION_ERROR');
+  });
+});
+
+describe('state component applicability — DM-03 Slice 42', () => {
+  function amount(overrides: Partial<StateAmount> = {}): StateAmount {
+    return {
+      code: 'SDI_EMPLOYEE',
+      label: 'SDI employee contribution',
+      amount: '12.34',
+      status: 'COMPLETE',
+      rules: [],
+      ...overrides,
+    };
+  }
+
+  function component(overrides: Partial<StateComponentResult> = {}): StateComponentResult {
+    return {
+      program: 'SDI',
+      jurisdictionCode: TEST_WORK,
+      role: 'WORK',
+      bucket: 'sdiWages',
+      applicability: 'APPLICABLE',
+      amount: amount(),
+      ...overrides,
+    };
+  }
+
+  it('Test 1 — an APPLICABLE component carries a real calculated amount', () => {
+    const applicable = component();
+    expect(applicable.applicability).toBe('APPLICABLE');
+    expect(applicable.amount.status).toBe('COMPLETE');
+    expect(applicable.amount.amount).toBe('12.34');
+    expect(applicable.amount.problem).toBeUndefined();
+  });
+
+  it('Test 2 — a NOT_APPLICABLE component is representable as COMPLETE + null + no problem', () => {
+    const notApplicable = component({
+      applicability: 'NOT_APPLICABLE',
+      amount: amount({ amount: null }),
+    });
+    expect(notApplicable.applicability).toBe('NOT_APPLICABLE');
+    expect(notApplicable.amount.status).toBe('COMPLETE');
+    expect(notApplicable.amount.amount).toBeNull();
+    expect(notApplicable.amount.problem).toBeUndefined();
+  });
+
+  it('Test 3 — NOT_APPLICABLE remains structurally distinguishable from a calculated zero', () => {
+    const notApplicable = component({
+      applicability: 'NOT_APPLICABLE',
+      amount: amount({ amount: null }),
+    });
+    const calculatedZero = component({
+      applicability: 'APPLICABLE',
+      amount: amount({ amount: '0' }),
+    });
+    expect(notApplicable.applicability).not.toBe(calculatedZero.applicability);
+    expect(notApplicable.amount.amount).toBeNull();
+    expect(calculatedZero.amount.amount).toBe('0');
+    // Both are COMPLETE -- the distinguishing signal is `applicability`,
+    // never `status` or a null-vs-zero heuristic alone.
+    expect(notApplicable.amount.status).toBe(calculatedZero.amount.status);
+  });
+
+  it('Test 4 — NOT_APPLICABLE remains distinguishable from an unsupported scenario', () => {
+    const notApplicable = component({
+      applicability: 'NOT_APPLICABLE',
+      amount: amount({ amount: null }),
+    });
+    const unsupported = component({
+      applicability: 'APPLICABLE',
+      amount: amount({
+        amount: null,
+        status: statusForStateReason(StateReason.SCENARIO_UNSUPPORTED),
+        problem: {
+          reason: StateReason.SCENARIO_UNSUPPORTED,
+          detail: 'rate is NOT_APPLICABLE in this jurisdiction; no rate is assumed',
+        },
+      }),
+    });
+    expect(notApplicable.applicability).toBe('NOT_APPLICABLE');
+    expect(unsupported.applicability).toBe('APPLICABLE');
+    expect(notApplicable.amount.problem).toBeUndefined();
+    expect(unsupported.amount.problem?.reason).toBe(StateReason.SCENARIO_UNSUPPORTED);
+    expect(notApplicable.amount.status).not.toBe(unsupported.amount.status);
+  });
+
+  it('Test 5 — NOT_APPLICABLE remains distinguishable from a missing rule', () => {
+    const notApplicable = component({
+      applicability: 'NOT_APPLICABLE',
+      amount: amount({ amount: null }),
+    });
+    const missing = component({
+      applicability: 'APPLICABLE',
+      amount: amount({
+        amount: null,
+        status: statusForStateReason(StateReason.RULE_MISSING),
+        problem: { reason: StateReason.RULE_MISSING, detail: 'no ACTIVE rule found' },
+      }),
+    });
+    expect(notApplicable.applicability).toBe('NOT_APPLICABLE');
+    expect(missing.applicability).toBe('APPLICABLE');
+    expect(notApplicable.amount.problem).toBeUndefined();
+    expect(missing.amount.problem?.reason).toBe(StateReason.RULE_MISSING);
+    expect(notApplicable.amount.status).not.toBe(missing.amount.status);
+  });
+
+  it('Test 6 — NOT_APPLICABLE remains distinguishable from an unverified rule', () => {
+    const notApplicable = component({
+      applicability: 'NOT_APPLICABLE',
+      amount: amount({ amount: null }),
+    });
+    const unverified = component({
+      applicability: 'APPLICABLE',
+      amount: amount({
+        amount: null,
+        status: statusForStateReason(StateReason.RULE_UNVERIFIED),
+        problem: { reason: StateReason.RULE_UNVERIFIED, detail: 'rule is not VERIFIED' },
+      }),
+    });
+    expect(notApplicable.applicability).toBe('NOT_APPLICABLE');
+    expect(unverified.applicability).toBe('APPLICABLE');
+    expect(notApplicable.amount.problem).toBeUndefined();
+    expect(unverified.amount.problem?.reason).toBe(StateReason.RULE_UNVERIFIED);
+    expect(notApplicable.amount.status).not.toBe(unverified.amount.status);
+  });
+
+  it('Guard A — a NOT_APPLICABLE component must not carry amount "0"', () => {
+    const notApplicable = component({
+      applicability: 'NOT_APPLICABLE',
+      amount: amount({ amount: null }),
+    });
+    expect(notApplicable.amount.amount).not.toBe('0');
+    expect(notApplicable.amount.amount).toBeNull();
+  });
+
+  it('Guard B — a NOT_APPLICABLE component must not carry a problem', () => {
+    const notApplicable = component({
+      applicability: 'NOT_APPLICABLE',
+      amount: amount({ amount: null }),
+    });
+    expect(notApplicable.amount.problem).toBeUndefined();
+  });
+
+  it('Guard C — a NOT_APPLICABLE component must use status COMPLETE', () => {
+    const notApplicable = component({
+      applicability: 'NOT_APPLICABLE',
+      amount: amount({ amount: null }),
+    });
+    expect(notApplicable.amount.status).toBe('COMPLETE');
   });
 });
 
