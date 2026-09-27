@@ -41,6 +41,7 @@ const TAX_YEAR = 2099;
 const EFFECTIVE = '2099-06-15T00:00:00.000Z';
 const ALLOWANCE_KEY = StateRuleKey.WITHHOLDING_ALLOWANCE_VALUE;
 const OTHER_KEY = StateRuleKey.PIT_FLAT_RATE;
+const DEPENDENT_EXEMPTION_KEY = StateRuleKey.PIT_DEPENDENT_EXEMPTION;
 const SINGLE = 'SINGLE';
 
 function reference(ruleKey: string): RuleReference {
@@ -630,4 +631,229 @@ describe('SUBTRACT_ALLOWANCES — precision', () => {
     // 1000 - (33.33 * 3) = 1000 - 99.99 = 900.01 exactly.
     expect(toStorageString(result.value.amount)).toBe('900.01');
   });
+});
+
+/**
+ * `PIT_DEPENDENT_EXEMPTION` through `SUBTRACT_ALLOWANCES` — owner-locked
+ * dependent-exemption contract.
+ *
+ * ===========================================================================
+ * THE LOCKED DECISION (DM-03).
+ *
+ * Dependent exemptions are represented as `{ operation: 'SUBTRACT_ALLOWANCES',
+ * operandRef: StateRuleKey.PIT_DEPENDENT_EXEMPTION }`, consuming
+ * `allowanceCounts[PIT_DEPENDENT_EXEMPTION]` — the SAME generic mechanism
+ * exercised throughout this file with `WITHHOLDING_ALLOWANCE_VALUE`.
+ * `PIT_DEPENDENT_EXEMPTION` validates under the identical
+ * `stateAmountPerAllowanceDetailSchema` (`AMOUNT_PER_ALLOWANCE`), and
+ * `subtractAllowances()` validates `operandRef` only against `VALID_RULE_KEYS`
+ * — never hard-coded to `WITHHOLDING_ALLOWANCE_VALUE` — so no production code
+ * change was required to support this key; these tests exist to PROVE that,
+ * not to add new interpreter behavior.
+ *
+ * `SUBTRACT_EXEMPTIONS` remains personal-exemption-only and is NOT modified —
+ * see `state-withholding-formula-subtract-exemptions.test.ts`'s own
+ * "reports RULE_DETAIL_INVALID for PIT_DEPENDENT_EXEMPTION" test, unchanged,
+ * for that regression.
+ *
+ * Fixtures are synthetic (RESERVED TEST jurisdiction/source ids, fabricated
+ * amounts) — this does not establish real-world dependent-exemption values
+ * for any jurisdiction, only that the repository's own generic contract
+ * holds for this specific rule key.
+ *
+ * Filing-status-specific dependent-exemption amounts remain an explicitly
+ * DEFERRED, unresolved question — `PIT_DEPENDENT_EXEMPTION`'s
+ * `AMOUNT_PER_ALLOWANCE` schema has no filing-status dimension, and nothing
+ * here infers whether one is ever needed.
+ * ===========================================================================
+ */
+describe('SUBTRACT_ALLOWANCES — PIT_DEPENDENT_EXEMPTION (owner-locked dependent-exemption contract)', () => {
+  it('A. subtracts amount x count for a basic dependent-exemption case', () => {
+    const ruleSet = buildRuleSet({
+      [DEPENDENT_EXEMPTION_KEY]: availableEntry(
+        DEPENDENT_EXEMPTION_KEY,
+        allowanceDetail({ amount: '500', allowanceType: 'DEPENDENT' }),
+      ),
+    });
+    const detail = formulaDetail([step(0, 'SUBTRACT_ALLOWANCES', DEPENDENT_EXEMPTION_KEY)]);
+
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('10000'),
+      SINGLE,
+      {
+        [DEPENDENT_EXEMPTION_KEY]: 2,
+      },
+      {},
+      null,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    // 10000 - (500 * 2) = 9000.
+    expect(toStorageString(result.value.amount)).toBe('9000');
+  });
+
+  it('B. zero dependents: subtracts zero and leaves the running value unchanged', () => {
+    const ruleSet = buildRuleSet({
+      [DEPENDENT_EXEMPTION_KEY]: availableEntry(
+        DEPENDENT_EXEMPTION_KEY,
+        allowanceDetail({ amount: '500', allowanceType: 'DEPENDENT' }),
+      ),
+    });
+    const detail = formulaDetail([step(0, 'SUBTRACT_ALLOWANCES', DEPENDENT_EXEMPTION_KEY)]);
+
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('10000'),
+      SINGLE,
+      {
+        [DEPENDENT_EXEMPTION_KEY]: 0,
+      },
+      {},
+      null,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    expect(toStorageString(result.value.amount)).toBe('10000');
+  });
+
+  it('C. multiple dependents: verifies multiplication for a count greater than one', () => {
+    const ruleSet = buildRuleSet({
+      [DEPENDENT_EXEMPTION_KEY]: availableEntry(
+        DEPENDENT_EXEMPTION_KEY,
+        allowanceDetail({ amount: '500', allowanceType: 'DEPENDENT' }),
+      ),
+    });
+    const detail = formulaDetail([step(0, 'SUBTRACT_ALLOWANCES', DEPENDENT_EXEMPTION_KEY)]);
+
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('10000'),
+      SINGLE,
+      {
+        [DEPENDENT_EXEMPTION_KEY]: 5,
+      },
+      {},
+      null,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    // 10000 - (500 * 5) = 7500.
+    expect(toStorageString(result.value.amount)).toBe('7500');
+  });
+
+  it('D. missing count: reports COMPONENT_NOT_STATED, the existing generic behavior — never zero', () => {
+    const ruleSet = buildRuleSet({
+      [DEPENDENT_EXEMPTION_KEY]: availableEntry(
+        DEPENDENT_EXEMPTION_KEY,
+        allowanceDetail({ amount: '500', allowanceType: 'DEPENDENT' }),
+      ),
+    });
+    const detail = formulaDetail([step(0, 'SUBTRACT_ALLOWANCES', DEPENDENT_EXEMPTION_KEY)]);
+
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('10000'),
+      SINGLE,
+      {},
+      {},
+      null,
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.problem.reason).toBe('COMPONENT_NOT_STATED');
+  });
+
+  it('E1. missing PIT_DEPENDENT_EXEMPTION rule: reports RULE_MISSING, the existing generic behavior', () => {
+    const ruleSet = buildRuleSet({});
+    const detail = formulaDetail([step(0, 'SUBTRACT_ALLOWANCES', DEPENDENT_EXEMPTION_KEY)]);
+
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('10000'),
+      SINGLE,
+      {
+        [DEPENDENT_EXEMPTION_KEY]: 2,
+      },
+      {},
+      null,
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.problem.reason).toBe('RULE_MISSING');
+  });
+
+  it('E2. invalid PIT_DEPENDENT_EXEMPTION detail shape: reports RULE_DETAIL_INVALID, the existing generic behavior', () => {
+    const ruleSet = buildRuleSet({
+      [DEPENDENT_EXEMPTION_KEY]: availableEntry(DEPENDENT_EXEMPTION_KEY, {
+        shape: 'AMOUNT_BY_FILING_STATUS',
+        unit: 'ANNUAL',
+        amounts: [{ filingStatus: SINGLE, amount: '500' }],
+      }),
+    });
+    const detail = formulaDetail([step(0, 'SUBTRACT_ALLOWANCES', DEPENDENT_EXEMPTION_KEY)]);
+
+    const result = runStateWithholdingFormula(
+      detail,
+      ruleSet,
+      money('10000'),
+      SINGLE,
+      {
+        [DEPENDENT_EXEMPTION_KEY]: 2,
+      },
+      {},
+      null,
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.problem.reason).toBe('RULE_DETAIL_INVALID');
+  });
+
+  it(
+    'F. contrasts with SUBTRACT_EXEMPTIONS: the same operandRef still fails RULE_DETAIL_INVALID there, ' +
+      'proving SUBTRACT_ALLOWANCES is the only supported path for this key',
+    () => {
+      const ruleSet = buildRuleSet({
+        [DEPENDENT_EXEMPTION_KEY]: availableEntry(
+          DEPENDENT_EXEMPTION_KEY,
+          allowanceDetail({ amount: '500', allowanceType: 'DEPENDENT' }),
+        ),
+      });
+
+      const viaAllowances = runStateWithholdingFormula(
+        formulaDetail([step(0, 'SUBTRACT_ALLOWANCES', DEPENDENT_EXEMPTION_KEY)]),
+        ruleSet,
+        money('10000'),
+        SINGLE,
+        { [DEPENDENT_EXEMPTION_KEY]: 2 },
+        {},
+        null,
+      );
+      expect(viaAllowances.ok).toBe(true);
+
+      const viaExemptions = runStateWithholdingFormula(
+        formulaDetail([step(0, 'SUBTRACT_EXEMPTIONS', DEPENDENT_EXEMPTION_KEY)]),
+        ruleSet,
+        money('10000'),
+        SINGLE,
+        { [DEPENDENT_EXEMPTION_KEY]: 2 },
+        {},
+        null,
+      );
+      expect(viaExemptions.ok).toBe(false);
+      if (viaExemptions.ok) throw new Error('expected failure');
+      expect(viaExemptions.problem.reason).toBe('RULE_DETAIL_INVALID');
+    },
+  );
 });
