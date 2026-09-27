@@ -176,6 +176,7 @@ function sdiAmount(
   buckets: Readonly<Record<StateBucket, StateAmount>>,
   side: 'EMPLOYEE' | 'EMPLOYER',
   ytdWages: Money,
+  ytdContribution: Money,
 ): StateAmount {
   const bucket = buckets[PROGRAM_BUCKET.SDI];
 
@@ -192,8 +193,8 @@ function sdiAmount(
 
   const result =
     side === 'EMPLOYEE'
-      ? calculateSdiEmployee(ruleSet, money(bucket.amount), ytdWages)
-      : calculateSdiEmployer(ruleSet, money(bucket.amount), ytdWages);
+      ? calculateSdiEmployee(ruleSet, money(bucket.amount), ytdWages, ytdContribution)
+      : calculateSdiEmployer(ruleSet, money(bucket.amount), ytdWages, ytdContribution);
 
   if (!result.ok) {
     return {
@@ -238,6 +239,7 @@ function pfmlAmount(
   buckets: Readonly<Record<StateBucket, StateAmount>>,
   side: 'EMPLOYEE' | 'EMPLOYER',
   ytdWages: Money,
+  ytdContribution: Money,
 ): StateAmount {
   const bucket = buckets[PROGRAM_BUCKET.PFML];
 
@@ -254,8 +256,8 @@ function pfmlAmount(
 
   const result =
     side === 'EMPLOYEE'
-      ? calculatePfmlEmployee(ruleSet, money(bucket.amount), ytdWages)
-      : calculatePfmlEmployer(ruleSet, money(bucket.amount), ytdWages);
+      ? calculatePfmlEmployee(ruleSet, money(bucket.amount), ytdWages, ytdContribution)
+      : calculatePfmlEmployer(ruleSet, money(bucket.amount), ytdWages, ytdContribution);
 
   if (!result.ok) {
     return {
@@ -818,6 +820,7 @@ export function calculateStateTaxes(
     buckets,
     'EMPLOYEE',
     money(context.ytd.sdiWages),
+    money(context.ytd.sdiContributions),
   );
   const pfmlEmployee = pfmlAmount(
     'PFML_EMPLOYEE',
@@ -826,6 +829,7 @@ export function calculateStateTaxes(
     buckets,
     'EMPLOYEE',
     money(context.ytd.pfmlWages),
+    money(context.ytd.pfmlContributions),
   );
   const sutaEmployee = sutaEmployeeAmount(
     'SUTA_EMPLOYEE',
@@ -893,6 +897,7 @@ export function calculateStateTaxes(
       buckets,
       'EMPLOYER',
       money(context.ytd.sdiWages),
+      money(context.ytd.sdiContributions),
     );
     const pfmlEmployer = pfmlAmount(
       'PFML_EMPLOYER',
@@ -901,6 +906,7 @@ export function calculateStateTaxes(
       buckets,
       'EMPLOYER',
       money(context.ytd.pfmlWages),
+      money(context.ytd.pfmlContributions),
     );
     const sutaEmployer = sutaEmployerAmount(
       'SUTA_EMPLOYER',

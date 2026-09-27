@@ -4,6 +4,7 @@ import type { RuleReference } from '@/lib/calculator/types/rules';
 import { StateReason, stateUnavailable } from '../errors/stateErrors';
 import { readDetail, readFail, readOk, readRate, type Read } from '../rules/read-detail';
 import type { StateRateDetail } from '../rules/detailSchemas';
+import { applyStateContributionMaximum } from '../rules/contributionMaximum';
 import { applyStateWageBase } from '../rules/wageBase';
 import { stateRule, type ResolvedStateRuleSet } from '../rules/stateRuleSet';
 import { StateRuleKey } from '../ruleKeys';
@@ -51,10 +52,34 @@ import { StateRuleKey } from '../ruleKeys';
  *                                              the supplied YTD figure.
  *   PFML_WAGE_BASE rule missing/unverified/invalid -> that failure, verbatim.
  *
- * `PFML_MAX_CONTRIBUTION` (`stateThresholdDetailSchema`) is a different,
- * still-deferred concern (a contribution-total cap, not a wage-base cap) —
- * it has NO existing reader/primitive anywhere in the repository and
- * remains entirely unread here; this wiring does not extend to it.
+ * `PFML_MAX_CONTRIBUTION` (`stateThresholdDetailSchema`) IS NOW APPLIED
+ * (SDI/PFML contribution maximum wiring), via the shared
+ * `applyStateContributionMaximum()` primitive (`contributionMaximum.ts`) —
+ * identical reasoning to `calculateSdi.ts`, re-verified for PFML: it caps
+ * the already-computed CONTRIBUTION DOLLAR AMOUNT (wages x rate), not the
+ * wages themselves. It consumes `StateCalculationContext.ytd.pfmlContributions`
+ * (this employer's PFML contributions, EXCLUDING the current pay period) to
+ * compute `remaining = max(maximum - ytdContribution, 0)` before clamping
+ * this period's computed contribution against it:
+ *
+ *   PFML_MAX_CONTRIBUTION resolves NOT_APPLICABLE -> no ceiling; proceed
+ *                                              uncapped.
+ *   PFML_MAX_CONTRIBUTION resolves APPLIES        -> capped correctly
+ *                                              against the remaining annual
+ *                                              ceiling, using the supplied
+ *                                              YTD contribution figure.
+ *   PFML_MAX_CONTRIBUTION rule missing/unverified/invalid -> that failure,
+ *                                              verbatim — this key is
+ *                                              already required alongside
+ *                                              the wage base for the
+ *                                              `PAID_LEAVE` capability
+ *                                              (`capabilityRuleKeys.ts`).
+ *
+ * OWNER-LOCKED: the resolved rule's `inclusive: boolean | null` field is
+ * preserved verbatim by `applyStateContributionMaximum()` and never
+ * interpreted here or anywhere else — `null` is never converted to `true` or
+ * `false`, and no strict/inclusive comparison behavior exists in this module.
+ * See `contributionMaximum.ts`'s own doc comment for the full reasoning.
  * ===========================================================================
  *
  * ===========================================================================
@@ -113,6 +138,7 @@ function calculatePfmlSide(
   ruleSet: ResolvedStateRuleSet,
   pfmlWages: Money,
   ytdWages: Money,
+  ytdContribution: Money,
   rateRuleKey: typeof StateRuleKey.PFML_EMPLOYEE_RATE | typeof StateRuleKey.PFML_EMPLOYER_RATE,
   expectedSide: 'EMPLOYEE' | 'EMPLOYER',
 ): Read<PfmlContribution> {
@@ -153,46 +179,65 @@ function calculatePfmlSide(
     return readFail(rate.problem);
   }
 
+  const periodContribution = multiply(taxable.value.applicableWages, rate.value);
+
+  const maxApplication = applyStateContributionMaximum(
+    ruleSet,
+    StateRuleKey.PFML_MAX_CONTRIBUTION,
+    periodContribution,
+    ytdContribution,
+  );
+  if (!maxApplication.ok) {
+    return readFail(maxApplication.problem);
+  }
+
   const rateReference = ruleReference(ruleSet, rateRuleKey);
-  const references = [taxable.value.reference, rateReference].filter(
+  const maxReference = ruleReference(ruleSet, StateRuleKey.PFML_MAX_CONTRIBUTION);
+  const references = [taxable.value.reference, rateReference, maxReference].filter(
     (reference): reference is RuleReference => reference !== undefined,
   );
 
   return readOk({
-    amount: multiply(taxable.value.applicableWages, rate.value),
+    amount: maxApplication.value.cappedContribution,
     rules: references,
   });
 }
 
 /** PFML employee contribution for this pay period, from already-resolved
- * PFML wages and this employer's YTD PFML wages (`StateYtd.pfmlWages`,
- * excluding the current period). */
+ * PFML wages, this employer's YTD PFML wages (`StateYtd.pfmlWages`,
+ * excluding the current period), and this employer's YTD PFML contributions
+ * (`StateYtd.pfmlContributions`, excluding the current period). */
 export function calculatePfmlEmployee(
   ruleSet: ResolvedStateRuleSet,
   pfmlWages: Money,
   ytdWages: Money,
+  ytdContribution: Money,
 ): Read<PfmlContribution> {
   return calculatePfmlSide(
     ruleSet,
     pfmlWages,
     ytdWages,
+    ytdContribution,
     StateRuleKey.PFML_EMPLOYEE_RATE,
     'EMPLOYEE',
   );
 }
 
 /** PFML employer contribution for this pay period, from already-resolved
- * PFML wages and this employer's YTD PFML wages (`StateYtd.pfmlWages`,
- * excluding the current period). */
+ * PFML wages, this employer's YTD PFML wages (`StateYtd.pfmlWages`,
+ * excluding the current period), and this employer's YTD PFML contributions
+ * (`StateYtd.pfmlContributions`, excluding the current period). */
 export function calculatePfmlEmployer(
   ruleSet: ResolvedStateRuleSet,
   pfmlWages: Money,
   ytdWages: Money,
+  ytdContribution: Money,
 ): Read<PfmlContribution> {
   return calculatePfmlSide(
     ruleSet,
     pfmlWages,
     ytdWages,
+    ytdContribution,
     StateRuleKey.PFML_EMPLOYER_RATE,
     'EMPLOYER',
   );

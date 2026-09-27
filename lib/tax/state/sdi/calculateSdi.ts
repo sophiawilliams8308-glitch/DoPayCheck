@@ -4,6 +4,7 @@ import type { RuleReference } from '@/lib/calculator/types/rules';
 import { StateReason, stateUnavailable } from '../errors/stateErrors';
 import { readDetail, readFail, readOk, readRate, type Read } from '../rules/read-detail';
 import type { StateRateDetail } from '../rules/detailSchemas';
+import { applyStateContributionMaximum } from '../rules/contributionMaximum';
 import { applyStateWageBase } from '../rules/wageBase';
 import { stateRule, type ResolvedStateRuleSet } from '../rules/stateRuleSet';
 import { StateRuleKey } from '../ruleKeys';
@@ -44,11 +45,39 @@ import { StateRuleKey } from '../ruleKeys';
  *                                             produces; not reinterpreted).
  *
  * `SDI_MAX_CONTRIBUTION` (a separate rule key, separate schema,
- * `stateThresholdDetailSchema`) is a different, still-deferred concern (a
- * contribution-total cap, not a wage-base cap) — it has NO existing
- * reader/primitive anywhere in the repository and remains entirely unread
- * here, a deferred item, not a half-built one; this wiring does not extend
- * to it.
+ * `stateThresholdDetailSchema`) IS NOW APPLIED (SDI/PFML contribution
+ * maximum wiring), via the shared `applyStateContributionMaximum()`
+ * primitive (`contributionMaximum.ts`) — a different mechanic from the wage
+ * base above: it caps the already-computed CONTRIBUTION DOLLAR AMOUNT
+ * (wages x rate), not the wages themselves. It consumes
+ * `StateCalculationContext.ytd.sdiContributions` (this employer's SDI
+ * contributions, EXCLUDING the current pay period) to compute
+ * `remaining = max(maximum - ytdContribution, 0)` before clamping this
+ * period's computed contribution against it:
+ *
+ *   SDI_MAX_CONTRIBUTION resolves NOT_APPLICABLE -> no ceiling; proceed
+ *                                             uncapped.
+ *   SDI_MAX_CONTRIBUTION resolves APPLIES        -> capped correctly
+ *                                             against the remaining annual
+ *                                             ceiling, using the supplied
+ *                                             YTD contribution figure.
+ *   SDI_MAX_CONTRIBUTION rule missing/unverified/invalid -> that failure,
+ *                                             verbatim (the SAME failure
+ *                                             applyStateContributionMaximum()
+ *                                             already produces; not
+ *                                             reinterpreted) — this key is
+ *                                             already required alongside the
+ *                                             wage base for the
+ *                                             `DISABILITY_SDI` capability
+ *                                             (`capabilityRuleKeys.ts`), so
+ *                                             requiring it to resolve here
+ *                                             is not a new expectation.
+ *
+ * OWNER-LOCKED: the resolved rule's `inclusive: boolean | null` field is
+ * preserved verbatim by `applyStateContributionMaximum()` and never
+ * interpreted here or anywhere else — `null` is never converted to `true` or
+ * `false`, and no strict/inclusive comparison behavior exists in this module.
+ * See `contributionMaximum.ts`'s own doc comment for the full reasoning.
  * ===========================================================================
  *
  * ===========================================================================
@@ -122,6 +151,7 @@ function calculateSdiSide(
   ruleSet: ResolvedStateRuleSet,
   sdiWages: Money,
   ytdWages: Money,
+  ytdContribution: Money,
   rateRuleKey: typeof StateRuleKey.SDI_EMPLOYEE_RATE | typeof StateRuleKey.SDI_EMPLOYER_RATE,
   expectedSide: 'EMPLOYEE' | 'EMPLOYER',
 ): Read<SdiContribution> {
@@ -162,35 +192,66 @@ function calculateSdiSide(
     return readFail(rate.problem);
   }
 
+  const periodContribution = multiply(taxable.value.applicableWages, rate.value);
+
+  const maxApplication = applyStateContributionMaximum(
+    ruleSet,
+    StateRuleKey.SDI_MAX_CONTRIBUTION,
+    periodContribution,
+    ytdContribution,
+  );
+  if (!maxApplication.ok) {
+    return readFail(maxApplication.problem);
+  }
+
   const rateReference = ruleReference(ruleSet, rateRuleKey);
-  const references = [taxable.value.reference, rateReference].filter(
+  const maxReference = ruleReference(ruleSet, StateRuleKey.SDI_MAX_CONTRIBUTION);
+  const references = [taxable.value.reference, rateReference, maxReference].filter(
     (reference): reference is RuleReference => reference !== undefined,
   );
 
   return readOk({
-    amount: multiply(taxable.value.applicableWages, rate.value),
+    amount: maxApplication.value.cappedContribution,
     rules: references,
   });
 }
 
 /** SDI employee contribution for this pay period, from already-resolved SDI
- * wages and this employer's YTD SDI wages (`StateYtd.sdiWages`, excluding
- * the current period). */
+ * wages, this employer's YTD SDI wages (`StateYtd.sdiWages`, excluding the
+ * current period), and this employer's YTD SDI contributions
+ * (`StateYtd.sdiContributions`, excluding the current period). */
 export function calculateSdiEmployee(
   ruleSet: ResolvedStateRuleSet,
   sdiWages: Money,
   ytdWages: Money,
+  ytdContribution: Money,
 ): Read<SdiContribution> {
-  return calculateSdiSide(ruleSet, sdiWages, ytdWages, StateRuleKey.SDI_EMPLOYEE_RATE, 'EMPLOYEE');
+  return calculateSdiSide(
+    ruleSet,
+    sdiWages,
+    ytdWages,
+    ytdContribution,
+    StateRuleKey.SDI_EMPLOYEE_RATE,
+    'EMPLOYEE',
+  );
 }
 
 /** SDI employer contribution for this pay period, from already-resolved SDI
- * wages and this employer's YTD SDI wages (`StateYtd.sdiWages`, excluding
- * the current period). */
+ * wages, this employer's YTD SDI wages (`StateYtd.sdiWages`, excluding the
+ * current period), and this employer's YTD SDI contributions
+ * (`StateYtd.sdiContributions`, excluding the current period). */
 export function calculateSdiEmployer(
   ruleSet: ResolvedStateRuleSet,
   sdiWages: Money,
   ytdWages: Money,
+  ytdContribution: Money,
 ): Read<SdiContribution> {
-  return calculateSdiSide(ruleSet, sdiWages, ytdWages, StateRuleKey.SDI_EMPLOYER_RATE, 'EMPLOYER');
+  return calculateSdiSide(
+    ruleSet,
+    sdiWages,
+    ytdWages,
+    ytdContribution,
+    StateRuleKey.SDI_EMPLOYER_RATE,
+    'EMPLOYER',
+  );
 }
